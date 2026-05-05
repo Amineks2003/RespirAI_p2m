@@ -1,0 +1,23 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# AI / ML
+*.pt
+*.pth
+*.h5
+*.ckpt
+
+# Local datasets (kept on disk, not versioned)
+models/
+test/
+ai-service/models/*.pkl
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db

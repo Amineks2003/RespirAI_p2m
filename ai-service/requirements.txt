@@ -1,0 +1,10 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+numpy>=1.26
+pydantic>=2.0
+
+# Optional real model runtimes. Install them in a Python 3.11 environment when
+# you want actual TensorFlow/PyTorch inference instead of artifact-backed fallback.
+# tensorflow>=2.16
+# torch>=2.2
+

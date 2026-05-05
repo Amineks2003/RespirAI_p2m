@@ -1,0 +1,2 @@
+"""FastAPI AI service package."""
+

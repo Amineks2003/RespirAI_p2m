@@ -1,0 +1,1671 @@
+import { useState, useRef, useEffect, useMemo } from "react";
+import { useNavigate } from "react-router";
+import {
+  Shield, Wind, Heart, Bell, ChevronRight, Activity,
+  Sun, Home, BarChart2, MessageCircle, Droplets,
+  Thermometer, Zap, Clock, CheckCircle,
+  TrendingDown, TrendingUp, X, Send, Mic, Leaf, Pill,
+  Calendar, User, LogOut, Phone, Camera, FileText,
+  Sparkles, CloudRain, CloudSun,
+} from "lucide-react";
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+import { ApiError, apiRequest } from "../lib/api";
+import { logout } from "../lib/auth";
+import { clearSession, getSession } from "../lib/session";
+
+/* ────────────────────────────────────────────────────────────
+   UI DATA
+──────────────────────────────────────────────────────────── */
+const spo2History: Array<{ t: string; v: number }> = [];
+const hrHistory: Array<{ t: string; v: number }> = [];
+const initialChat: Array<{ id: string | number; from: "ai" | "user"; text: string; time: string }> = [];
+const medications: Array<{ id?: string; name: string; dose: string; time: string; taken: boolean; icon: string }> = [];
+const historyData: Array<{ date: string; spo2: number; hr: number; status: string }> = [];
+
+const navItems = [
+  { icon: Home, label: "Home" },
+  { icon: BarChart2, label: "Health Form" },
+  { icon: MessageCircle, label: "Doctor Chat" },
+  { icon: User, label: "Profile" },
+];
+
+type ChatMessageItem = {
+  id: string | number;
+  from: "ai" | "user" | "doctor";
+  text: string;
+  time: string;
+};
+
+const INTAKE_DEFAULTS = {
+  age: 45,
+  sex: "other",
+  height_cm: 170,
+  weight_kg: 70,
+  smoking_status: "non_smoker",
+  spo2: 96,
+  heart_rate: 80,
+  respiratory_rate: 18,
+  temperature: 37,
+  cough: false,
+  shortness_of_breath: false,
+  wheezing: false,
+  chest_pain: false,
+  fatigue: false,
+  asthma: false,
+  copd: false,
+  hypertension: false,
+  diabetes: false,
+  heart_disease: false,
+  air_quality_index: 60,
+  environment_temperature: 24,
+  humidity: 50,
+};
+
+const INTAKE_NUMERIC_RULES: Record<string, { min: number; max: number; step?: string }> = {
+  age: { min: 1, max: 120, step: "1" },
+  height_cm: { min: 90, max: 260, step: "0.1" },
+  weight_kg: { min: 20, max: 350, step: "0.1" },
+  spo2: { min: 70, max: 100, step: "0.1" },
+  heart_rate: { min: 20, max: 220, step: "1" },
+  respiratory_rate: { min: 5, max: 80, step: "1" },
+  temperature: { min: 30, max: 45, step: "0.1" },
+  air_quality_index: { min: 0, max: 500, step: "1" },
+  environment_temperature: { min: -30, max: 60, step: "0.1" },
+  humidity: { min: 0, max: 100, step: "0.1" },
+};
+
+const INTAKE_LABELS: Record<string, string> = {
+  age: "Age",
+  sex: "Sex",
+  height_cm: "Height (cm)",
+  weight_kg: "Weight (kg)",
+  smoking_status: "Smoking Status",
+  spo2: "SpO2 (%)",
+  heart_rate: "Heart Rate (bpm)",
+  respiratory_rate: "Respiratory Rate (br/min)",
+  temperature: "Body Temperature (C)",
+  cough: "Cough",
+  shortness_of_breath: "Shortness of Breath",
+  wheezing: "Wheezing",
+  chest_pain: "Chest Pain",
+  fatigue: "Fatigue",
+  asthma: "Asthma",
+  copd: "COPD",
+  hypertension: "Hypertension",
+  diabetes: "Diabetes",
+  heart_disease: "Heart Disease",
+  air_quality_index: "Air Quality Index",
+  environment_temperature: "Environment Temperature (C)",
+  humidity: "Humidity (%)",
+};
+
+const SEX_OPTIONS = [
+  { value: "male", label: "Male" },
+  { value: "female", label: "Female" },
+  { value: "other", label: "Other" },
+];
+
+const SMOKING_OPTIONS = [
+  { value: "non_smoker", label: "Non smoker" },
+  { value: "former_smoker", label: "Former smoker" },
+  { value: "current_smoker", label: "Current smoker" },
+];
+
+const BOOLEAN_FORM_FIELDS = [
+  "cough",
+  "shortness_of_breath",
+  "wheezing",
+  "chest_pain",
+  "fatigue",
+  "asthma",
+  "copd",
+  "hypertension",
+  "diabetes",
+  "heart_disease",
+];
+
+const createIntakeDraft = (source: any = {}) => ({
+  age: String(source?.age ?? INTAKE_DEFAULTS.age),
+  sex: String(source?.sex ?? INTAKE_DEFAULTS.sex),
+  height_cm: String(source?.height_cm ?? INTAKE_DEFAULTS.height_cm),
+  weight_kg: String(source?.weight_kg ?? INTAKE_DEFAULTS.weight_kg),
+  smoking_status: String(source?.smoking_status ?? INTAKE_DEFAULTS.smoking_status),
+  spo2: String(source?.spo2 ?? INTAKE_DEFAULTS.spo2),
+  heart_rate: String(source?.heart_rate ?? INTAKE_DEFAULTS.heart_rate),
+  respiratory_rate: String(source?.respiratory_rate ?? INTAKE_DEFAULTS.respiratory_rate),
+  temperature: String(source?.temperature ?? INTAKE_DEFAULTS.temperature),
+  cough: Boolean(source?.cough ?? INTAKE_DEFAULTS.cough),
+  shortness_of_breath: Boolean(source?.shortness_of_breath ?? INTAKE_DEFAULTS.shortness_of_breath),
+  wheezing: Boolean(source?.wheezing ?? INTAKE_DEFAULTS.wheezing),
+  chest_pain: Boolean(source?.chest_pain ?? INTAKE_DEFAULTS.chest_pain),
+  fatigue: Boolean(source?.fatigue ?? INTAKE_DEFAULTS.fatigue),
+  asthma: Boolean(source?.asthma ?? INTAKE_DEFAULTS.asthma),
+  copd: Boolean(source?.copd ?? INTAKE_DEFAULTS.copd),
+  hypertension: Boolean(source?.hypertension ?? INTAKE_DEFAULTS.hypertension),
+  diabetes: Boolean(source?.diabetes ?? INTAKE_DEFAULTS.diabetes),
+  heart_disease: Boolean(source?.heart_disease ?? INTAKE_DEFAULTS.heart_disease),
+  air_quality_index: String(source?.air_quality_index ?? INTAKE_DEFAULTS.air_quality_index),
+  environment_temperature: String(source?.environment_temperature ?? INTAKE_DEFAULTS.environment_temperature),
+  humidity: String(source?.humidity ?? INTAKE_DEFAULTS.humidity),
+});
+
+const formatTwoDecimals = (value: unknown) => {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return "--";
+  return Number(parsed.toFixed(2)).toString();
+};
+
+/* ────────────────────────────────────────────────────────────
+   HOME SCREEN
+──────────────────────────────────────────────────────────── */
+function HomeScreen({ homeData, meds, onToggleMedication, pendingMedicationIds, latestDoctorResult }: any) {
+  const latestVital = homeData?.latestVital || {};
+  const latestEnvironment = homeData?.latestEnvironment || {};
+  const aiInsight = homeData?.aiInsight || {};
+
+  const hasNumeric = (value: unknown) => typeof value === "number" && Number.isFinite(value);
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+  const spo2 = hasNumeric(latestVital.spo2) ? latestVital.spo2 : null;
+  const heartRate = hasNumeric(latestVital.hr) ? latestVital.hr : null;
+  const breathingRate = hasNumeric(latestVital.rr) ? latestVital.rr : null;
+  const coughEvents = hasNumeric(latestVital.coughEvents) ? latestVital.coughEvents : null;
+  const aqi = hasNumeric(latestEnvironment.aqi) ? latestEnvironment.aqi : null;
+  const humidity = hasNumeric(latestEnvironment.humidity) ? latestEnvironment.humidity : null;
+  const temperature = hasNumeric(latestEnvironment.temperature) ? latestEnvironment.temperature : null;
+
+  const spo2Progress = spo2 !== null ? clamp(spo2, 0, 100) : 0;
+  const breathingProgress = breathingRate !== null ? clamp(((breathingRate - 8) / 20) * 100, 0, 100) : 0;
+  const heartProgress = heartRate !== null ? clamp(((heartRate - 45) / 95) * 100, 0, 100) : 0;
+
+  const coughLevel = coughEvents === null
+    ? "Unknown"
+    : coughEvents <= 3
+      ? "Low"
+      : coughEvents <= 8
+        ? "Moderate"
+        : "High";
+
+  const aqiStatus = aqi === null
+    ? "Unknown"
+    : aqi <= 50
+      ? "Good"
+      : aqi <= 100
+        ? "Moderate"
+        : aqi <= 150
+          ? "Unhealthy for Sensitive"
+          : "Unhealthy";
+
+  const temperatureStatus = temperature === null
+    ? "Unknown"
+    : temperature < 18
+      ? "Cool"
+      : temperature <= 25
+        ? "Comfortable"
+        : "Warm";
+
+  const riskLevel = (score: number) => {
+    if (score >= 75) return "Critical";
+    if (score >= 50) return "High";
+    if (score >= 30) return "Moderate";
+    return "Low";
+  };
+
+  const monitoringLabel = latestVital?.timestamp
+    ? `Live monitoring · updated ${new Date(latestVital.timestamp).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
+    : "Live monitoring active";
+
+  const medsTaken = meds.filter((medication: any) => medication.taken).length;
+  const doctorScoreValue = hasNumeric(latestDoctorResult?.score)
+    ? Number(latestDoctorResult.score)
+    : null;
+  const doctorResultMessage = doctorScoreValue !== null
+    ? `Global risk update: ${formatTwoDecimals(doctorScoreValue)}% (${riskLevel(doctorScoreValue)}).`
+    : "";
+  const heroMessage = doctorResultMessage || "Your doctor has not shared a new AI result yet.";
+
+  return (
+    <div className="space-y-5">
+      {/* ── Doctor Result Hero ── */}
+      <div className="relative bg-gradient-to-br from-teal-500 to-emerald-600 rounded-3xl p-6 overflow-hidden shadow-xl shadow-teal-200/60">
+        {/* Background circles */}
+        <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full bg-white/10" />
+        <div className="absolute -bottom-6 -left-6 w-28 h-28 rounded-full bg-white/10" />
+
+        <div className="relative flex items-center gap-5">
+          {/* Animated shield */}
+          <div className="flex-shrink-0">
+            <div className="relative w-20 h-20">
+              <div className="w-20 h-20 rounded-full bg-white/20 flex items-center justify-center ring-4 ring-white/30">
+                <Shield className="w-10 h-10 text-white" />
+              </div>
+              <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-white rounded-full flex items-center justify-center shadow-md">
+                <CheckCircle className="w-4 h-4 text-emerald-500" />
+              </div>
+            </div>
+          </div>
+          <div>
+            <p className="text-emerald-100 text-sm font-medium mb-1">New Doctor AI Result</p>
+            <p className="text-white text-xl font-black leading-tight mb-1 max-w-xs">{heroMessage}</p>
+            <div className="flex items-center gap-2 mt-2">
+              <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              <span className="text-emerald-100 text-xs font-medium">{monitoringLabel}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-slate-800 font-bold">My Vitals</h3>
+          <span className="text-teal-600 text-xs font-semibold flex items-center gap-1">
+            <div className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse" /> Live
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          {/* SpO2 */}
+          <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-xl bg-blue-100 flex items-center justify-center">
+                <Heart className="w-4 h-4 text-blue-500" />
+              </div>
+              <span className="text-slate-500 text-xs font-medium">Oxygen (SpO₂)</span>
+            </div>
+            <div className="flex items-end gap-1 mb-1">
+              <span className="text-emerald-600 font-black" style={{ fontSize: "32px", lineHeight: 1 }}>{spo2 !== null ? formatTwoDecimals(spo2) : "--"}</span>
+              <span className="text-slate-400 text-sm mb-1">{spo2 !== null ? "%" : ""}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <TrendingUp className="w-3 h-3 text-emerald-500" />
+              <span className="text-emerald-600 text-xs font-semibold">Normal range</span>
+            </div>
+            <div className="mt-2.5 w-full bg-slate-100 rounded-full h-1.5">
+              <div className="h-1.5 rounded-full bg-gradient-to-r from-teal-400 to-emerald-500" style={{ width: `${spo2Progress}%` }} />
+            </div>
+          </div>
+
+          {/* Cough Activity */}
+          <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-xl bg-teal-100 flex items-center justify-center">
+                <Mic className="w-4 h-4 text-teal-500" />
+              </div>
+              <span className="text-slate-500 text-xs font-medium">Cough Activity</span>
+            </div>
+            <div className="flex items-end gap-1 mb-1">
+              <span className="text-emerald-600 font-black" style={{ fontSize: "26px", lineHeight: 1 }}>{coughLevel}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <CheckCircle className="w-3 h-3 text-emerald-500" />
+              <span className="text-emerald-600 text-xs font-semibold">{coughEvents !== null ? `${formatTwoDecimals(coughEvents)} events/hr` : "--"}</span>
+            </div>
+            <div className="mt-2.5 flex gap-1">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className={`flex-1 h-5 rounded-md ${i <= 1 ? "bg-emerald-400" : "bg-slate-100"}`} />
+              ))}
+            </div>
+          </div>
+
+          {/* Breathing Rate */}
+          <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-xl bg-sky-100 flex items-center justify-center">
+                <Wind className="w-4 h-4 text-sky-500" />
+              </div>
+              <span className="text-slate-500 text-xs font-medium">Breathing Rate</span>
+            </div>
+            <div className="flex items-end gap-1 mb-1">
+              <span className="text-emerald-600 font-black" style={{ fontSize: "32px", lineHeight: 1 }}>{breathingRate !== null ? formatTwoDecimals(breathingRate) : "--"}</span>
+              <span className="text-slate-400 text-sm mb-1">{breathingRate !== null ? "br/min" : ""}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <CheckCircle className="w-3 h-3 text-emerald-500" />
+              <span className="text-emerald-600 text-xs font-semibold">Normal (12–20)</span>
+            </div>
+            <div className="mt-2.5 w-full bg-slate-100 rounded-full h-1.5">
+              <div className="h-1.5 rounded-full bg-gradient-to-r from-sky-400 to-teal-400" style={{ width: `${breathingProgress}%` }} />
+            </div>
+          </div>
+
+          {/* Heart Rate */}
+          <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-xl bg-rose-100 flex items-center justify-center">
+                <Activity className="w-4 h-4 text-rose-500" />
+              </div>
+              <span className="text-slate-500 text-xs font-medium">Heart Rate</span>
+            </div>
+            <div className="flex items-end gap-1 mb-1">
+              <span className="text-emerald-600 font-black" style={{ fontSize: "32px", lineHeight: 1 }}>{heartRate !== null ? formatTwoDecimals(heartRate) : "--"}</span>
+              <span className="text-slate-400 text-sm mb-1">{heartRate !== null ? "bpm" : ""}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <CheckCircle className="w-3 h-3 text-emerald-500" />
+              <span className="text-emerald-600 text-xs font-semibold">Resting normal</span>
+            </div>
+            <div className="mt-2.5 w-full bg-slate-100 rounded-full h-1.5">
+              <div className="h-1.5 rounded-full bg-gradient-to-r from-rose-400 to-pink-400" style={{ width: `${heartProgress}%` }} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Environment Tracker ── */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-slate-800 font-bold">Environment Today</h3>
+          <span className="text-slate-400 text-xs">Room sensor feed</span>
+        </div>
+        <div className="bg-gradient-to-br from-sky-50 to-blue-50 rounded-2xl border border-sky-100 overflow-hidden shadow-sm">
+          {/* Top weather strip */}
+          <div className="flex items-center gap-3 px-4 py-3.5 border-b border-sky-100">
+            <CloudSun className="w-5 h-5 text-amber-500" />
+            <div className="flex-1">
+              <p className="text-xs text-slate-500">{latestEnvironment?.weather || "Weather unavailable"}</p>
+              <p className="text-slate-800 font-semibold text-sm">{temperature !== null ? `${formatTwoDecimals(temperature)}°C` : "--"}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-slate-500">Humidity</p>
+              <p className="text-slate-700 font-bold text-sm">{humidity !== null ? `${formatTwoDecimals(humidity)}%` : "--"}</p>
+            </div>
+          </div>
+
+          {/* Metrics row */}
+          <div className="grid grid-cols-3 divide-x divide-sky-100 bg-white/60">
+            {/* AQI */}
+            <div className="flex flex-col items-center py-4 px-2">
+              <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center mb-2">
+                <Wind className="w-4.5 h-4.5 text-amber-600" />
+              </div>
+              <span className="text-xs text-slate-500 mb-0.5">Air Quality</span>
+              <span className="text-amber-700 font-black text-lg leading-none">{aqi !== null ? formatTwoDecimals(aqi) : "--"}</span>
+              <span className="text-[10px] text-amber-600 font-semibold mt-1 bg-amber-100 px-2 py-0.5 rounded-full">{aqiStatus}</span>
+            </div>
+
+            {/* Pollen */}
+            <div className="flex flex-col items-center py-4 px-2">
+              <div className="w-9 h-9 rounded-xl bg-lime-100 flex items-center justify-center mb-2">
+                <Leaf className="w-4.5 h-4.5 text-lime-600" />
+              </div>
+              <span className="text-xs text-slate-500 mb-0.5">Pollen</span>
+              <span className="text-lime-700 font-black text-lg leading-none">{latestEnvironment?.pollen || "--"}</span>
+              <span className="text-[10px] text-lime-700 font-semibold mt-1 bg-lime-100 px-2 py-0.5 rounded-full">{latestEnvironment?.pollen ? "Live" : "No data"}</span>
+            </div>
+
+            {/* Temperature */}
+            <div className="flex flex-col items-center py-4 px-2">
+              <div className="w-9 h-9 rounded-xl bg-orange-100 flex items-center justify-center mb-2">
+                <Thermometer className="w-4.5 h-4.5 text-orange-500" />
+              </div>
+              <span className="text-xs text-slate-500 mb-0.5">Temperature</span>
+              <span className="text-orange-700 font-black text-lg leading-none">{temperature !== null ? `${formatTwoDecimals(temperature)}°C` : "--"}</span>
+              <span className="text-[10px] text-orange-600 font-semibold mt-1 bg-orange-100 px-2 py-0.5 rounded-full">{temperatureStatus}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Today's meds */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-slate-800 font-bold">Today's Medications</h3>
+          <span className="text-emerald-600 text-xs font-semibold">{medsTaken}/{meds.length} taken</span>
+        </div>
+        <div className="space-y-2.5">
+          {meds.length === 0 && (
+            <div className="text-sm text-slate-500 bg-white border border-slate-200 rounded-2xl p-4">No medications found for your profile.</div>
+          )}
+          {meds.map((m: any) => (
+            <div key={m.name} className={`flex items-center gap-3 p-3.5 rounded-2xl border ${m.taken ? "bg-emerald-50 border-emerald-200" : "bg-white border-slate-200"}`}>
+              <input
+                type="checkbox"
+                checked={Boolean(m.taken)}
+                onChange={(event) => onToggleMedication(m.id, event.target.checked)}
+                disabled={!m.id || pendingMedicationIds.includes(String(m.id))}
+                className="w-4 h-4 rounded accent-emerald-600 border-slate-300 disabled:opacity-60 disabled:cursor-not-allowed"
+                aria-label={`Mark ${m.name} as taken`}
+              />
+              <span className="text-2xl flex-shrink-0">{m.icon}</span>
+              <div className="flex-1">
+                <p className="text-slate-800 text-sm font-semibold">{m.name}</p>
+                <p className="text-slate-400 text-xs">{m.dose} · {m.time}</p>
+              </div>
+              {m.id && pendingMedicationIds.includes(String(m.id)) ? (
+                <span className="text-xs font-bold px-2 py-1 rounded-full bg-blue-100 text-blue-700">Saving...</span>
+              ) : (
+                <span className={`text-xs font-bold px-2 py-1 rounded-full ${m.taken ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                  {m.taken ? "✓ Done" : "Pending"}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────
+   HISTORY SCREEN
+──────────────────────────────────────────────────────────── */
+function HistoryScreen({ intakeForm, onSaveIntakeForm, savingIntakeForm }: any) {
+  const [formSent, setFormSent] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [formState, setFormState] = useState<any>(createIntakeDraft(intakeForm));
+
+  useEffect(() => {
+    setFormState(createIntakeDraft(intakeForm));
+    setErrors({});
+    setFormSent(false);
+  }, [intakeForm]);
+
+  const updateField = (field: string, value: string | boolean) => {
+    setFormSent(false);
+    setFormState((previous: any) => ({ ...previous, [field]: value }));
+    setErrors((previous) => {
+      if (!previous[field]) return previous;
+      const nextErrors = { ...previous };
+      delete nextErrors[field];
+      return nextErrors;
+    });
+  };
+
+  const previewPayload = useMemo(() => {
+    const preview: Record<string, any> = {};
+
+    for (const field of Object.keys(INTAKE_NUMERIC_RULES)) {
+      const rawValue = String(formState[field] ?? "").trim();
+      if (!rawValue) {
+        preview[field] = null;
+        continue;
+      }
+      const parsed = Number(rawValue);
+      preview[field] = Number.isFinite(parsed) ? parsed : null;
+    }
+
+    preview.sex = String(formState.sex || "").trim().toLowerCase();
+    preview.smoking_status = String(formState.smoking_status || "").trim().toLowerCase();
+
+    for (const field of BOOLEAN_FORM_FIELDS) {
+      preview[field] = Boolean(formState[field]);
+    }
+
+    return preview;
+  }, [formState]);
+
+  const validateAndBuildPayload = () => {
+    const nextErrors: Record<string, string> = {};
+    const payload: Record<string, any> = {};
+
+    for (const [field, bounds] of Object.entries(INTAKE_NUMERIC_RULES)) {
+      const rawValue = String(formState[field] ?? "").trim();
+      if (!rawValue) {
+        nextErrors[field] = "This field is required.";
+        continue;
+      }
+
+      const parsed = Number(rawValue);
+      if (!Number.isFinite(parsed)) {
+        nextErrors[field] = "Must be a valid number.";
+        continue;
+      }
+
+      if (parsed < bounds.min || parsed > bounds.max) {
+        nextErrors[field] = `Must be between ${bounds.min} and ${bounds.max}.`;
+        continue;
+      }
+
+      payload[field] = parsed;
+    }
+
+    const sex = String(formState.sex || "").trim().toLowerCase();
+    if (!sex) {
+      nextErrors.sex = "This field is required.";
+    } else if (!["male", "female", "other"].includes(sex)) {
+      nextErrors.sex = "Must be one of: male, female, other.";
+    } else {
+      payload.sex = sex;
+    }
+
+    const smokingStatus = String(formState.smoking_status || "").trim().toLowerCase();
+    if (!smokingStatus) {
+      nextErrors.smoking_status = "This field is required.";
+    } else if (!["non_smoker", "former_smoker", "current_smoker"].includes(smokingStatus)) {
+      nextErrors.smoking_status = "Must be one of: non_smoker, former_smoker, current_smoker.";
+    } else {
+      payload.smoking_status = smokingStatus;
+    }
+
+    for (const field of BOOLEAN_FORM_FIELDS) {
+      payload[field] = Boolean(formState[field]);
+    }
+
+    return {
+      isValid: Object.keys(nextErrors).length === 0,
+      errors: nextErrors,
+      payload,
+    };
+  };
+
+  const handleSave = async () => {
+    const validation = validateAndBuildPayload();
+    setErrors(validation.errors);
+
+    if (!validation.isValid) {
+      setFormSent(false);
+      return;
+    }
+
+    const ok = await onSaveIntakeForm(validation.payload);
+    setFormSent(Boolean(ok));
+  };
+
+  const renderNumericField = (field: string) => {
+    const bounds = INTAKE_NUMERIC_RULES[field];
+    const hasError = Boolean(errors[field]);
+
+    return (
+      <div key={field}>
+        <p className="text-xs text-slate-500 mb-1">{INTAKE_LABELS[field]}</p>
+        <input
+          type="number"
+          min={bounds.min}
+          max={bounds.max}
+          step={bounds.step || "1"}
+          value={formState[field]}
+          onChange={(event) => updateField(field, event.target.value)}
+          className={`w-full border rounded-xl px-3 py-2.5 text-sm ${hasError ? "border-red-300 bg-red-50" : "border-slate-200"}`}
+        />
+        {hasError && <p className="text-[11px] text-red-600 mt-1">{errors[field]}</p>}
+      </div>
+    );
+  };
+
+  const renderBooleanField = (field: string) => (
+    <button
+      key={field}
+      type="button"
+      onClick={() => updateField(field, !Boolean(formState[field]))}
+      className={`flex items-center justify-between rounded-xl border px-3 py-2.5 text-sm transition-colors ${formState[field] ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+    >
+      <span>{INTAKE_LABELS[field]}</span>
+      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${formState[field] ? "bg-emerald-200 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+        {formState[field] ? "Yes" : "No"}
+      </span>
+    </button>
+  );
+
+  return (
+    <div className="space-y-5">
+      <h3 className="text-slate-800 font-bold">Patient Health Form (ML Schema)</h3>
+      <p className="text-slate-500 text-sm">Complete all required fields. This payload is validated before submission and used for AI risk prediction.</p>
+
+      <div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-sm space-y-4">
+        <div>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">1) Demographics and Lifestyle</p>
+          <div className="grid grid-cols-2 gap-3">
+            {renderNumericField("age")}
+            <div>
+              <p className="text-xs text-slate-500 mb-1">{INTAKE_LABELS.sex}</p>
+              <select
+                value={formState.sex}
+                onChange={(event) => updateField("sex", event.target.value)}
+                className={`w-full border rounded-xl px-3 py-2.5 text-sm ${errors.sex ? "border-red-300 bg-red-50" : "border-slate-200"}`}
+              >
+                {SEX_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              {errors.sex && <p className="text-[11px] text-red-600 mt-1">{errors.sex}</p>}
+            </div>
+            {renderNumericField("height_cm")}
+            {renderNumericField("weight_kg")}
+            <div className="col-span-2">
+              <p className="text-xs text-slate-500 mb-1">{INTAKE_LABELS.smoking_status}</p>
+              <select
+                value={formState.smoking_status}
+                onChange={(event) => updateField("smoking_status", event.target.value)}
+                className={`w-full border rounded-xl px-3 py-2.5 text-sm ${errors.smoking_status ? "border-red-300 bg-red-50" : "border-slate-200"}`}
+              >
+                {SMOKING_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              {errors.smoking_status && <p className="text-[11px] text-red-600 mt-1">{errors.smoking_status}</p>}
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">2) Vital Signs</p>
+          <div className="grid grid-cols-2 gap-3">
+            {renderNumericField("spo2")}
+            {renderNumericField("heart_rate")}
+            {renderNumericField("respiratory_rate")}
+            {renderNumericField("temperature")}
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">3) Symptoms</p>
+          <div className="grid grid-cols-2 gap-3">
+            {["cough", "shortness_of_breath", "wheezing", "chest_pain", "fatigue"].map(renderBooleanField)}
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">4) Medical History</p>
+          <div className="grid grid-cols-2 gap-3">
+            {["asthma", "copd", "hypertension", "diabetes", "heart_disease"].map(renderBooleanField)}
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">5) Environment</p>
+          <div className="grid grid-cols-2 gap-3">
+            {renderNumericField("air_quality_index")}
+            {renderNumericField("environment_temperature")}
+            <div className="col-span-2">{renderNumericField("humidity")}</div>
+          </div>
+        </div>
+
+        {Object.keys(errors).length > 0 && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+            <p className="text-xs font-semibold text-red-700 mb-1">Please fix the highlighted fields.</p>
+            <ul className="list-disc pl-4 text-[11px] text-red-700 space-y-0.5">
+              {Object.entries(errors).map(([field, message]) => (
+                <li key={field}>{INTAKE_LABELS[field] || field}: {message}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="flex justify-end">
+          <button
+            onClick={handleSave}
+            disabled={savingIntakeForm}
+            className={`px-4 py-2.5 rounded-xl text-sm font-semibold ${savingIntakeForm ? "bg-teal-300 text-white cursor-not-allowed" : "bg-teal-600 text-white hover:bg-teal-700"}`}
+          >
+            {savingIntakeForm ? "Saving..." : "Save Form"}
+          </button>
+        </div>
+
+        {formSent && !savingIntakeForm && (
+          <div className="flex justify-end">
+            <p className="text-xs font-semibold text-emerald-600">Form saved successfully.</p>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-slate-900 rounded-2xl border border-slate-700 p-4 shadow-sm">
+        <p className="text-xs font-bold text-slate-300 uppercase tracking-wide mb-2">JSON Preview</p>
+        <pre className="text-[11px] leading-relaxed text-emerald-200 overflow-x-auto">
+          {JSON.stringify(previewPayload, null, 2)}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────
+   AI CHAT SCREEN
+──────────────────────────────────────────────────────────── */
+function ChatScreen({ messages, onSendMessage, loadingChat }: {
+  messages: ChatMessageItem[];
+  onSendMessage: (text: string) => Promise<void>;
+  loadingChat: boolean;
+}) {
+  const [input, setInput] = useState("");
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loadingChat]);
+
+  const sendMessage = async () => {
+    if (!input.trim()) return;
+    const prompt = input.trim();
+    setInput("");
+    await onSendMessage(prompt);
+  };
+
+  return (
+    <div className="flex flex-col bg-white rounded-2xl border border-slate-100 p-3" style={{ height: "520px" }}>
+      {/* Header */}
+      <div className="flex items-center gap-3 pb-3 border-b border-slate-100 mb-3 flex-shrink-0">
+        <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-violet-500 to-blue-600 flex items-center justify-center shadow-md shadow-violet-200">
+          <User className="w-5 h-5 text-white" />
+        </div>
+        <div>
+          <p className="font-bold text-slate-800">Doctor Chat</p>
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-xs text-emerald-600 font-medium">Connected with your doctor</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto space-y-3 pr-1 bg-slate-50 rounded-xl p-3">
+        {!messages.length && !loadingChat && (
+          <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3">
+            No messages yet. Start the conversation with your assistant.
+          </div>
+        )}
+        {messages.map((m) => (
+          <div key={m.id} className={`flex gap-2 ${m.from === "user" ? "justify-end" : "justify-start"}`}>
+            {m.from !== "user" && (
+              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-500 to-blue-600 flex items-center justify-center flex-shrink-0 mt-1 shadow">
+                <User className="w-3.5 h-3.5 text-white" />
+              </div>
+            )}
+            <div className={`max-w-[78%] rounded-2xl px-4 py-3 ${
+              m.from === "user"
+                ? "bg-teal-500 text-white rounded-br-sm shadow-sm"
+                : "bg-white border border-slate-200 text-slate-800 rounded-bl-sm shadow-sm"
+            }`}>
+              <p className="text-sm leading-relaxed">{m.text}</p>
+              <p className={`text-[10px] mt-1 ${m.from === "user" ? "text-teal-200" : "text-slate-400"}`}>{m.time}</p>
+            </div>
+          </div>
+        ))}
+        {loadingChat && (
+          <div className="flex gap-2 justify-start">
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-500 to-blue-600 flex items-center justify-center flex-shrink-0 mt-1 shadow">
+              <User className="w-3.5 h-3.5 text-white" />
+            </div>
+            <div className="bg-slate-100 rounded-2xl rounded-bl-sm px-4 py-3">
+              <div className="flex gap-1.5 items-center h-4">
+                {[0, 0.2, 0.4].map((d, i) => (
+                  <div key={i} className="w-2 h-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: `${d}s` }} />
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Quick prompts */}
+      <div className="flex gap-2 overflow-x-auto pb-2 pt-3 flex-shrink-0">
+        {["I feel shortness of breath", "Can we review my medications?", "Please check my latest form"].map((q) => (
+          <button key={q} onClick={() => setInput(q)}
+            className="whitespace-nowrap text-xs font-medium px-3 py-1.5 rounded-full bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 transition-colors flex-shrink-0">
+            {q}
+          </button>
+        ))}
+      </div>
+
+      {/* Input */}
+      <div className="flex items-center gap-2 pt-2 border-t border-slate-100 flex-shrink-0">
+        <button className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 transition-colors flex-shrink-0">
+          <Mic className="w-4 h-4 text-slate-500" />
+        </button>
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+          placeholder="Ask anything…"
+          className="flex-1 bg-slate-100 rounded-xl px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-300 transition-all"
+        />
+        <button onClick={sendMessage}
+          className="p-2.5 rounded-xl bg-teal-500 hover:bg-teal-600 transition-colors flex-shrink-0 shadow-md shadow-teal-200">
+          <Send className="w-4 h-4 text-white" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────
+   SETTINGS SCREEN
+──────────────────────────────────────────────────────────── */
+function SettingsScreen({
+  profile,
+  settings,
+  onToggleSetting,
+  onSignOut,
+  pendingSettingKeys,
+  riskHistory,
+  isEditingProfile,
+  profileDraft,
+  onStartProfileEdit,
+  onCancelProfileEdit,
+  onProfileDraftChange,
+  onSaveProfile,
+  savingProfile,
+}: any) {
+  const fullName = profile?.fullName || "Patient";
+  const patientCode = profile?.patientCode || "#P-0000";
+  const condition = profile?.condition || "Respiratory Monitoring";
+  const doctorName = profile?.doctorName || "Unassigned";
+  const emergencyContactDisplay = profile?.emergencyContactName
+    ? `${profile.emergencyContactName}${profile?.emergencyContactPhone ? ` · ${profile.emergencyContactPhone}` : ""}`
+    : "Not set";
+
+  return (
+    <div className="space-y-5">
+      {/* Profile card */}
+      <div className="bg-gradient-to-br from-teal-50 to-emerald-50 rounded-3xl p-5 border border-teal-100 text-center">
+        <div className="relative inline-block mb-3">
+          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-teal-400 to-emerald-500 flex items-center justify-center shadow-xl shadow-teal-200 mx-auto">
+            <User className="w-10 h-10 text-white" />
+          </div>
+          <button className="absolute bottom-0 right-0 w-7 h-7 bg-white rounded-full border border-slate-200 flex items-center justify-center shadow hover:bg-slate-50 transition-colors">
+            <Camera className="w-3.5 h-3.5 text-slate-500" />
+          </button>
+        </div>
+        <h3 className="text-slate-800 font-black text-lg">{fullName}</h3>
+        <p className="text-slate-500 text-sm mt-0.5">Patient ID: {patientCode}</p>
+        <div className="flex items-center justify-center gap-2 mt-3">
+          <span className="bg-teal-100 text-teal-700 text-xs font-semibold px-3 py-1 rounded-full">Patient</span>
+          <span className="bg-blue-100 text-blue-700 text-xs px-3 py-1 rounded-full">{condition}</span>
+        </div>
+        {!isEditingProfile ? (
+          <button
+            onClick={onStartProfileEdit}
+            className="mt-4 flex items-center gap-2 mx-auto text-sm text-teal-600 border border-teal-200 bg-white rounded-xl px-4 py-2 hover:bg-teal-50 transition-colors font-medium"
+          >
+            <User className="w-4 h-4" /> Edit Profile
+          </button>
+        ) : (
+          <div className="mt-4 flex items-center justify-center gap-2">
+            <button
+              onClick={onCancelProfileEdit}
+              disabled={savingProfile}
+              className="text-sm border border-slate-200 text-slate-600 bg-white rounded-xl px-4 py-2 hover:bg-slate-50 transition-colors font-medium disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onSaveProfile}
+              disabled={savingProfile}
+              className="text-sm text-white bg-teal-600 rounded-xl px-4 py-2 hover:bg-teal-700 transition-colors font-medium disabled:opacity-60"
+            >
+              {savingProfile ? "Saving..." : "Save Profile"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Personal info */}
+      <div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-sm">
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">Personal Information</p>
+        {!isEditingProfile ? (
+          <div className="space-y-3 divide-y divide-slate-50">
+            {[
+              { label: "Full Name", value: fullName },
+              { label: "Date of Birth", value: profile?.dob || "Not set" },
+              { label: "Blood Type", value: profile?.bloodType || "Not set" },
+              { label: "Condition", value: condition },
+              { label: "Physician", value: doctorName },
+              { label: "Emergency Contact", value: emergencyContactDisplay },
+            ].map((item) => (
+              <div key={item.label} className="flex items-center justify-between py-2 first:pt-0 last:pb-0">
+                <span className="text-xs text-slate-400">{item.label}</span>
+                <span className="text-sm font-semibold text-slate-700">{item.value}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Full Name</p>
+              <input
+                value={profileDraft?.fullName || ""}
+                onChange={(event) => onProfileDraftChange("fullName", event.target.value)}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-xs text-slate-400 mb-1">Date of Birth</p>
+                <input
+                  value={profileDraft?.dob || ""}
+                  onChange={(event) => onProfileDraftChange("dob", event.target.value)}
+                  placeholder="YYYY-MM-DD"
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <p className="text-xs text-slate-400 mb-1">Blood Type</p>
+                <input
+                  value={profileDraft?.bloodType || ""}
+                  onChange={(event) => onProfileDraftChange("bloodType", event.target.value)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Condition</p>
+              <input
+                value={profileDraft?.condition || ""}
+                onChange={(event) => onProfileDraftChange("condition", event.target.value)}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-xs text-slate-400 mb-1">Emergency Contact Name</p>
+                <input
+                  value={profileDraft?.emergencyContactName || ""}
+                  onChange={(event) => onProfileDraftChange("emergencyContactName", event.target.value)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <p className="text-xs text-slate-400 mb-1">Emergency Contact Phone</p>
+                <input
+                  value={profileDraft?.emergencyContactPhone || ""}
+                  onChange={(event) => onProfileDraftChange("emergencyContactPhone", event.target.value)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400">Physician is assigned by your care team and cannot be changed here.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Preferences */}
+      <div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-sm">
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-4">Preferences</p>
+        <div className="space-y-4">
+          {[
+            { label: "Push Notifications", sub: "Alerts for vitals & AI tips", icon: Bell, state: settings.notifications, key: "notifications" },
+            { label: "Share Data with Doctor", sub: "Real-time vitals sharing", icon: Activity, state: settings.dataSharing, key: "dataSharing" },
+            { label: "Biometric Login", sub: "Face ID / Fingerprint", icon: Shield, state: settings.biometric, key: "biometric" },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center">
+                  <item.icon className="w-4 h-4 text-slate-500" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">{item.label}</p>
+                  <p className="text-xs text-slate-400">{item.sub}</p>
+                </div>
+              </div>
+              <button onClick={() => onToggleSetting(item.key, !item.state)}
+                disabled={pendingSettingKeys.includes(item.key)}
+                className={`w-12 h-6 rounded-full transition-all relative ${item.state ? "bg-teal-500" : "bg-slate-200"} ${pendingSettingKeys.includes(item.key) ? "opacity-60 cursor-not-allowed" : ""}`}>
+                <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow ${item.state ? "left-6" : "left-0.5"}`} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* History */}
+      <div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-sm space-y-1">
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">History</p>
+        {riskHistory?.length ? riskHistory.map((entry: any, index: number) => (
+          <div key={`${entry.sentAt || "na"}-${entry.score}-${index}`} className="w-full flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100 text-left">
+            <Calendar className="w-4 h-4 text-blue-500" />
+            <span className="text-sm font-medium text-slate-700 flex-1">
+              {entry.sentAt ? new Date(entry.sentAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "Unknown date"}
+            </span>
+            <span className="text-xs text-slate-500">Global Risk {formatTwoDecimals(entry.score || 0)}%{entry.confidence !== undefined && entry.confidence !== null ? ` · Conf. ${formatTwoDecimals(entry.confidence || 0)}%` : ""}</span>
+          </div>
+        )) : (
+          <div className="text-sm text-slate-500">No doctor risk history available.</div>
+        )}
+      </div>
+
+      <button onClick={onSignOut}
+        className="w-full flex items-center justify-center gap-2 py-3.5 border-2 border-red-200 text-red-600 rounded-2xl font-semibold hover:bg-red-50 transition-colors">
+        <LogOut className="w-4 h-4" /> Sign Out
+      </button>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────
+   MAIN PATIENT APP
+──────────────────────────────────────────────────────────── */
+export function PatientApp() {
+  const navigate = useNavigate();
+  const [activeNav, setActiveNav] = useState("Home");
+  const [showNotif, setShowNotif] = useState(false);
+  const [loadingChat, setLoadingChat] = useState(false);
+  const [dataError, setDataError] = useState("");
+  const [chatMessages, setChatMessages] = useState<ChatMessageItem[]>(initialChat);
+  const [settingsState, setSettingsState] = useState({
+    notifications: true,
+    dataSharing: true,
+    biometric: false,
+    darkMode: false,
+  });
+  const [profileState, setProfileState] = useState({
+    fullName: "",
+    patientCode: "",
+    condition: "",
+    bloodType: "",
+    dob: "",
+    doctorName: "",
+    emergencyContactName: "",
+    emergencyContactPhone: "",
+  });
+  const [profileDraft, setProfileDraft] = useState({
+    fullName: "",
+    patientCode: "",
+    condition: "",
+    bloodType: "",
+    dob: "",
+    doctorName: "",
+    emergencyContactName: "",
+    emergencyContactPhone: "",
+  });
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [homeState, setHomeState] = useState<any>(null);
+  const [medicationsState, setMedicationsState] = useState(medications);
+  const [spo2TrendState, setSpo2TrendState] = useState(spo2History);
+  const [hrTrendState, setHrTrendState] = useState(hrHistory);
+  const [historyRowsState, setHistoryRowsState] = useState(historyData);
+  const [doctorRiskHistoryState, setDoctorRiskHistoryState] = useState<any[]>([]);
+  const [latestDoctorResultState, setLatestDoctorResultState] = useState<any>(null);
+  const [intakeFormState, setIntakeFormState] = useState<any>(null);
+  const [savingIntakeForm, setSavingIntakeForm] = useState(false);
+  const [pendingMedicationIds, setPendingMedicationIds] = useState<string[]>([]);
+  const [pendingNotificationIds, setPendingNotificationIds] = useState<string[]>([]);
+  const [pendingSettingKeys, setPendingSettingKeys] = useState<string[]>([]);
+
+  const unreadCount = notifications.filter((notification) => !notification.read).length;
+
+  useEffect(() => {
+    const session = getSession();
+    if (!session || session.role !== "patient") {
+      clearSession();
+      navigate("/", { replace: true });
+      return;
+    }
+
+    let stopSync = false;
+
+    const formatTime = (dateValue?: string) => {
+      if (!dateValue) return "--:--";
+      return new Date(dateValue).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    };
+
+    const loadPatientData = async () => {
+      try {
+        setDataError("");
+
+        const [homePayload, spo2HistoryPayload, hrHistoryPayload, chatPayload, settingsPayload, profilePayload, notificationsPayload, doctorPayload, intakeFormPayload] = await Promise.all([
+          apiRequest<any>("/patient/me/home", { auth: true }),
+          apiRequest<any>("/patient/me/history?metric=spo2&limit=30", { auth: true }),
+          apiRequest<any>("/patient/me/history?metric=hr&limit=30", { auth: true }),
+          apiRequest<any>("/patient/me/chat?limit=100", { auth: true }),
+          apiRequest<any>("/patient/me/settings", { auth: true }),
+          apiRequest<any>("/patient/me/profile", { auth: true }),
+          apiRequest<any>("/patient/me/notifications?limit=20", { auth: true }),
+          apiRequest<any>("/patient/me/doctor", { auth: true }),
+          apiRequest<any>("/patient/me/intake-form", { auth: true }),
+        ]);
+
+        setIntakeFormState(intakeFormPayload?.form || null);
+
+        if (homePayload?.home) {
+          setHomeState(homePayload.home);
+          setLatestDoctorResultState(homePayload.home.latestDoctorSentResult || null);
+          setMedicationsState(
+            Array.isArray(homePayload.home.medications)
+              ? homePayload.home.medications.map((medication: any) => ({
+                  id: medication._id,
+                  name: medication.name,
+                  dose: medication.dose,
+                  time: medication.time,
+                  taken: Boolean(medication.takenToday),
+                  icon: medication.icon || "💊",
+                }))
+              : [],
+          );
+        } else {
+          setHomeState(null);
+          setMedicationsState([]);
+        }
+
+        if (Array.isArray(spo2HistoryPayload?.records)) {
+          const spo2Records = spo2HistoryPayload.records;
+          setSpo2TrendState(
+            spo2Records.map((record: any, index: number) => ({
+              t: index === spo2Records.length - 1 ? "Now" : formatTime(record.timestamp),
+              v: record.spo2 ?? record.value ?? 0,
+            })),
+          );
+
+          const rows = spo2Records.slice(-7).map((record: any) => ({
+            date: new Date(record.timestamp).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+            spo2: record.spo2 ?? 0,
+            hr: record.hr ?? 0,
+            status: (record.spo2 ?? 0) < 94 ? "warning" : "stable",
+          }));
+          setHistoryRowsState(rows);
+        } else {
+          setSpo2TrendState([]);
+          setHistoryRowsState([]);
+        }
+
+        if (Array.isArray(hrHistoryPayload?.records)) {
+          const hrRecords = hrHistoryPayload.records;
+          setHrTrendState(
+            hrRecords.map((record: any, index: number) => ({
+              t: index === hrRecords.length - 1 ? "Now" : formatTime(record.timestamp),
+              v: record.hr ?? record.value ?? 0,
+            })),
+          );
+        } else {
+          setHrTrendState([]);
+        }
+
+        if (Array.isArray(chatPayload?.messages)) {
+          setChatMessages(
+            chatPayload.messages.map((message: any, index: number) => ({
+              id: message._id || index + 1,
+              from: message.role === "doctor" ? "doctor" : message.role === "ai" ? "ai" : "user",
+              text: message.text,
+              time: formatTime(message.createdAt),
+            })),
+          );
+        } else {
+          setChatMessages([]);
+        }
+
+        if (settingsPayload?.settings) {
+          setSettingsState((previous) => ({ ...previous, ...settingsPayload.settings }));
+        }
+
+        if (profilePayload?.profile) {
+          const user = profilePayload.profile.user;
+          const patient = profilePayload.profile.patient;
+          const doctorName = doctorPayload?.doctor?.user
+            ? `Dr. ${doctorPayload.doctor.user.firstName} ${doctorPayload.doctor.user.lastName}`
+            : "Unassigned";
+
+          const nextProfileState = {
+            fullName: `${user.firstName} ${user.lastName}`,
+            patientCode: patient.patientCode || "#P-0000",
+            condition: patient.condition || "Respiratory Monitoring",
+            bloodType: patient.bloodType || "Not set",
+            dob: patient.dob ? new Date(patient.dob).toISOString().slice(0, 10) : "",
+            doctorName,
+            emergencyContactName: patient.emergencyContact?.name || "",
+            emergencyContactPhone: patient.emergencyContact?.phone || "",
+          };
+
+          setProfileState(nextProfileState);
+          setProfileDraft(nextProfileState);
+          setDoctorRiskHistoryState(Array.isArray(patient.doctorRiskHistory) ? patient.doctorRiskHistory : []);
+          if (patient.latestDoctorSentResult) {
+            setLatestDoctorResultState(patient.latestDoctorSentResult);
+          }
+        }
+
+        const seenPatientNotifKeys = new Set<string>();
+        setNotifications(
+          Array.isArray(notificationsPayload?.notifications)
+            ? notificationsPayload.notifications
+              .filter((notification: any) => {
+                const eventType = notification?.metadata?.type;
+                return eventType === "doctor-chat" || eventType === "doctor-ai-results";
+              })
+              .filter((notification: any) => {
+                const eventType = String(notification?.metadata?.type || "");
+                const patientCode = String(notification?.metadata?.patientCode || "");
+                const score = notification?.metadata?.score;
+                const confidence = notification?.metadata?.confidence;
+                const normalizedMessage = String(notification?.message || notification?.title || "")
+                  .replace(/\(\d+%\s*global\s*risk\)/gi, "")
+                  .replace(/\s+/g, " ")
+                  .trim()
+                  .toLowerCase();
+                const key = eventType === "doctor-ai-results"
+                  ? `${eventType}-${patientCode}-${score ?? "na"}-${confidence ?? "na"}-${normalizedMessage}`
+                  : `${eventType}-${patientCode}-${normalizedMessage}`;
+                if (seenPatientNotifKeys.has(key)) return false;
+                seenPatientNotifKeys.add(key);
+                return true;
+              })
+              .map((notification: any) => ({
+                id: notification._id,
+                text: notification.message || notification.title,
+                type: notification.type === "success" ? "good" : notification.type === "warning" ? "warn" : "info",
+                time: formatTime(notification.createdAt),
+                read: Boolean(notification.read),
+                metadata: notification.metadata || {},
+                message: notification.message || notification.title,
+              }))
+            : [],
+        );
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : "Unable to sync patient app.";
+        setDataError(message);
+      }
+    };
+
+    const refreshLiveVitals = async () => {
+      try {
+        const [homePayload, spo2HistoryPayload, hrHistoryPayload] = await Promise.all([
+          apiRequest<any>("/patient/me/home", { auth: true }),
+          apiRequest<any>("/patient/me/history?metric=spo2&limit=30", { auth: true }),
+          apiRequest<any>("/patient/me/history?metric=hr&limit=30", { auth: true }),
+        ]);
+
+        if (stopSync) return;
+
+        if (homePayload?.home) {
+          setHomeState(homePayload.home);
+          setLatestDoctorResultState(homePayload.home.latestDoctorSentResult || null);
+          setMedicationsState(
+            Array.isArray(homePayload.home.medications)
+              ? homePayload.home.medications.map((medication: any) => ({
+                  id: medication._id,
+                  name: medication.name,
+                  dose: medication.dose,
+                  time: medication.time,
+                  taken: Boolean(medication.takenToday),
+                  icon: medication.icon || "💊",
+                }))
+              : [],
+          );
+        }
+
+        if (Array.isArray(spo2HistoryPayload?.records)) {
+          const spo2Records = spo2HistoryPayload.records;
+          setSpo2TrendState(
+            spo2Records.map((record: any, index: number) => ({
+              t: index === spo2Records.length - 1 ? "Now" : formatTime(record.timestamp),
+              v: record.spo2 ?? record.value ?? 0,
+            })),
+          );
+
+          const rows = spo2Records.slice(-7).map((record: any) => ({
+            date: new Date(record.timestamp).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+            spo2: record.spo2 ?? 0,
+            hr: record.hr ?? 0,
+            status: (record.spo2 ?? 0) < 94 ? "warning" : "stable",
+          }));
+          setHistoryRowsState(rows);
+        }
+
+        if (Array.isArray(hrHistoryPayload?.records)) {
+          const hrRecords = hrHistoryPayload.records;
+          setHrTrendState(
+            hrRecords.map((record: any, index: number) => ({
+              t: index === hrRecords.length - 1 ? "Now" : formatTime(record.timestamp),
+              v: record.hr ?? record.value ?? 0,
+            })),
+          );
+        }
+      } catch {
+        // Keep current UI data if live refresh fails.
+      }
+    };
+
+    loadPatientData();
+
+    const liveSyncTimer = setInterval(() => {
+      refreshLiveVitals();
+    }, 15000);
+
+    return () => {
+      stopSync = true;
+      clearInterval(liveSyncTimer);
+    };
+  }, [navigate]);
+
+  const handleSendMessage = async (text: string) => {
+    const optimisticUserMessage: { id: string; from: "user"; text: string; time: string } = {
+      id: `${Date.now()}-user`,
+      from: "user",
+      text,
+      time: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+    };
+    setChatMessages((previous) => [...previous, optimisticUserMessage]);
+
+    try {
+      setLoadingChat(true);
+      const response = await apiRequest<any>("/patient/me/chat", {
+        method: "POST",
+        auth: true,
+        body: { text },
+      });
+
+      const incoming: ChatMessageItem[] = (response?.messages || []).map((message: any, index: number) => ({
+        id: message._id || `${Date.now()}-${index}`,
+        from: (message.role === "doctor" ? "doctor" : message.role === "ai" ? "ai" : "user") as "ai" | "user" | "doctor",
+        text: message.text,
+        time: new Date(message.createdAt || Date.now()).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+      }));
+
+      setChatMessages((previous) => [...previous, ...incoming.filter((message) => message.from !== "user")]);
+    } catch {
+      const fallbackAiMessage: { id: string; from: "doctor"; text: string; time: string } = {
+        id: `${Date.now()}-ai-fallback`,
+        from: "doctor",
+        text: "Unable to send message right now. Please try again.",
+        time: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+      };
+      setChatMessages((previous) => [...previous, fallbackAiMessage]);
+    } finally {
+      setLoadingChat(false);
+    }
+  };
+
+  const handleToggleSetting = async (key: string, value: boolean) => {
+    if (pendingSettingKeys.includes(key)) return;
+
+    const previousValue = settingsState[key as keyof typeof settingsState];
+    setSettingsState((previous) => ({ ...previous, [key]: value }));
+    setPendingSettingKeys((previous) => [...previous, key]);
+    try {
+      await apiRequest("/patient/me/settings", {
+        method: "PATCH",
+        auth: true,
+        body: { [key]: value },
+      });
+    } catch {
+      setSettingsState((previous) => ({ ...previous, [key]: previousValue }));
+    } finally {
+      setPendingSettingKeys((previous) => previous.filter((pendingKey) => pendingKey !== key));
+    }
+  };
+
+  const handleToggleMedication = async (medicationId: string, takenToday: boolean) => {
+    if (!medicationId) return;
+
+    const medicationKey = String(medicationId);
+    if (pendingMedicationIds.includes(medicationKey)) return;
+
+    setMedicationsState((previous: any[]) => previous.map((medication) => (
+      medication.id === medicationId ? { ...medication, taken: takenToday } : medication
+    )));
+    setPendingMedicationIds((previous) => [...previous, medicationKey]);
+
+    try {
+      await apiRequest(`/patient/me/medications/${medicationId}/taken`, {
+        method: "PATCH",
+        auth: true,
+        body: { takenToday },
+      });
+    } catch {
+      setMedicationsState((previous: any[]) => previous.map((medication) => (
+        medication.id === medicationId ? { ...medication, taken: !takenToday } : medication
+      )));
+    } finally {
+      setPendingMedicationIds((previous) => previous.filter((pendingId) => pendingId !== medicationKey));
+    }
+  };
+
+  const handleMarkNotificationRead = async (notificationId: string) => {
+    if (pendingNotificationIds.includes(notificationId)) return;
+
+    const targetNotification = notifications.find((notification) => notification.id === notificationId);
+    if (!targetNotification || targetNotification.read) return;
+
+    setNotifications((previous) => previous.map((notification) => (
+      notification.id === notificationId ? { ...notification, read: true } : notification
+    )));
+    setPendingNotificationIds((previous) => [...previous, notificationId]);
+
+    try {
+      await apiRequest(`/patient/me/notifications/${notificationId}/read`, {
+        method: "PATCH",
+        auth: true,
+      });
+    } catch {
+      setNotifications((previous) => previous.map((notification) => (
+        notification.id === notificationId ? { ...notification, read: false } : notification
+      )));
+    } finally {
+      setPendingNotificationIds((previous) => previous.filter((pendingId) => pendingId !== notificationId));
+    }
+  };
+
+  const handleSignOut = async () => {
+    await logout();
+    navigate("/", { replace: true });
+  };
+
+  const handleStartProfileEdit = () => {
+    setProfileDraft(profileState);
+    setEditingProfile(true);
+    setDataError("");
+  };
+
+  const handleCancelProfileEdit = () => {
+    setProfileDraft(profileState);
+    setEditingProfile(false);
+  };
+
+  const handleProfileDraftChange = (field: string, value: string) => {
+    setProfileDraft((previous) => ({ ...previous, [field]: value }));
+  };
+
+  const handleSaveProfile = async () => {
+    if (savingProfile) return;
+
+    const trimmedName = (profileDraft.fullName || "").trim();
+    if (!trimmedName) {
+      setDataError("Full name is required.");
+      return;
+    }
+
+    const nameParts = trimmedName.split(/\s+/);
+    const firstName = nameParts.shift() || "";
+    const lastName = nameParts.join(" ") || "Patient";
+
+    setSavingProfile(true);
+    setDataError("");
+    try {
+      const payload = await apiRequest<any>("/patient/me/profile", {
+        method: "PATCH",
+        auth: true,
+        body: {
+          firstName,
+          lastName,
+          dob: profileDraft.dob && profileDraft.dob !== "Not set" ? profileDraft.dob : null,
+          condition: profileDraft.condition,
+          bloodType: profileDraft.bloodType && profileDraft.bloodType !== "Not set" ? profileDraft.bloodType : null,
+          emergencyContact: {
+            name: (profileDraft.emergencyContactName || "").trim(),
+            phone: (profileDraft.emergencyContactPhone || "").trim(),
+          },
+        },
+      });
+
+      const user = payload?.profile?.user;
+      const patient = payload?.profile?.patient;
+      const updatedProfile = {
+        fullName: `${user?.firstName || firstName} ${user?.lastName || lastName}`.trim(),
+        patientCode: patient?.patientCode || profileState.patientCode,
+        condition: patient?.condition || profileDraft.condition,
+        bloodType: patient?.bloodType || profileDraft.bloodType,
+        dob: patient?.dob ? new Date(patient.dob).toISOString().slice(0, 10) : "",
+        doctorName: profileState.doctorName,
+        emergencyContactName: patient?.emergencyContact?.name || profileDraft.emergencyContactName,
+        emergencyContactPhone: patient?.emergencyContact?.phone || profileDraft.emergencyContactPhone,
+      };
+
+      setProfileState(updatedProfile);
+      setProfileDraft(updatedProfile);
+      setEditingProfile(false);
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "Unable to save profile.";
+      setDataError(message);
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleSaveIntakeForm = async (formState: any) => {
+    if (savingIntakeForm) return false;
+    setSavingIntakeForm(true);
+    try {
+      const payload = await apiRequest<any>("/patient/me/intake-form", {
+        method: "PATCH",
+        auth: true,
+        body: formState,
+      });
+      setIntakeFormState(payload?.form || null);
+      return true;
+    } catch (error) {
+      let message = "Unable to save health form.";
+      if (error instanceof ApiError) {
+        message = error.message;
+        if (error.details && typeof error.details === "object" && !Array.isArray(error.details)) {
+          const firstDetail = Object.entries(error.details as Record<string, unknown>)[0];
+          if (firstDetail) {
+            message = `${message} ${String(firstDetail[0])}: ${String(firstDetail[1])}`;
+          }
+        }
+      }
+      setDataError(message);
+      return false;
+    } finally {
+      setSavingIntakeForm(false);
+    }
+  };
+
+  const getScreen = () => {
+    const latestDoctorResult = latestDoctorResultState || notifications.find((notification) => notification?.metadata?.type === "doctor-ai-results");
+    switch (activeNav) {
+      case "Home": return <HomeScreen homeData={homeState} meds={medicationsState} onToggleMedication={handleToggleMedication} pendingMedicationIds={pendingMedicationIds} latestDoctorResult={latestDoctorResult} />;
+      case "Health Form": return <HistoryScreen intakeForm={intakeFormState} onSaveIntakeForm={handleSaveIntakeForm} savingIntakeForm={savingIntakeForm} />;
+      case "Doctor Chat": return <ChatScreen messages={chatMessages} onSendMessage={handleSendMessage} loadingChat={loadingChat} />;
+      case "Profile":
+        return (
+          <SettingsScreen
+            profile={profileState}
+            settings={settingsState}
+            onToggleSetting={handleToggleSetting}
+            onSignOut={handleSignOut}
+            pendingSettingKeys={pendingSettingKeys}
+            riskHistory={doctorRiskHistoryState}
+            isEditingProfile={editingProfile}
+            profileDraft={profileDraft}
+            onStartProfileEdit={handleStartProfileEdit}
+            onCancelProfileEdit={handleCancelProfileEdit}
+            onProfileDraftChange={handleProfileDraftChange}
+            onSaveProfile={handleSaveProfile}
+            savingProfile={savingProfile}
+          />
+        );
+      default: return null;
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-200 to-slate-300 flex items-center justify-center py-8 px-4">
+      {/* Phone frame */}
+      <div className="relative w-[390px] bg-slate-50 rounded-[3.5rem] shadow-2xl overflow-hidden border-[5px] border-slate-800 flex flex-col"
+        style={{ height: "844px", boxShadow: "0 0 0 1px #1e293b, 0 40px 80px rgba(0,0,0,0.4)" }}>
+
+        {/* Status bar */}
+        <div className="bg-white px-7 pt-3 pb-1 flex items-center justify-between flex-shrink-0">
+          <span className="text-slate-900 text-xs font-bold">{new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span>
+          <div className="flex items-center gap-1.5">
+            {[3, 5, 7, 9].map((h, i) => (
+              <div key={i} className="w-1 bg-slate-900 rounded-sm" style={{ height: `${h}px` }} />
+            ))}
+            <div className="w-4 h-2.5 border border-slate-900 rounded-sm flex items-center px-0.5 ml-1">
+              <div className="h-1.5 bg-emerald-500 rounded-sm w-3" />
+            </div>
+          </div>
+        </div>
+
+        {/* App Header */}
+        <div className="bg-white px-5 pb-3 flex items-center justify-between flex-shrink-0 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
+            <div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center">
+                  <Activity className="w-3.5 h-3.5 text-white" />
+                </div>
+                <span className="font-black text-sm text-slate-800">Respir<span className="text-teal-500">AI</span></span>
+              </div>
+              <p className="text-slate-400 text-xs ml-8">Good morning, {profileState.fullName?.split(" ")[0] || "there"} 👋</p>
+
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSignOut}
+              aria-label="Sign out"
+              title="Sign out"
+              className="w-9 h-9 rounded-xl bg-rose-50 flex items-center justify-center hover:bg-rose-100 transition-colors"
+            >
+              <LogOut className="w-4 h-4 text-rose-600" />
+            </button>
+            <div className="relative">
+              <button onClick={() => setShowNotif(!showNotif)}
+                className="relative w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition-colors">
+                <Bell className="w-4 h-4 text-slate-600" />
+                {unreadCount > 0 && <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-teal-500 rounded-full border border-white" />}
+              </button>
+              {showNotif && (
+                <div className="absolute right-0 top-11 w-64 bg-white rounded-2xl border border-slate-100 shadow-2xl z-50 overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                    <span className="font-bold text-slate-800 text-sm">Notifications</span>
+                    <button onClick={() => setShowNotif(false)}><X className="w-3.5 h-3.5 text-slate-400" /></button>
+                  </div>
+                  {notifications.length === 0 && (
+                    <div className="px-4 py-3 text-xs text-slate-400">No notifications yet.</div>
+                  )}
+                  {notifications.map((n) => (
+                    <div
+                      key={n.id}
+                      onClick={() => handleMarkNotificationRead(n.id)}
+                      className={`px-4 py-3 border-b border-slate-50 last:border-0 ${pendingNotificationIds.includes(String(n.id)) ? "cursor-wait" : "hover:bg-slate-50 cursor-pointer"} ${!n.read ? "bg-teal-50/40" : ""}`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${n.type === "good" ? "bg-emerald-500" : n.type === "warn" ? "bg-amber-500" : "bg-blue-500"} ${!n.read ? "animate-pulse" : "opacity-50"}`} />
+                        <div>
+                          <p className={`text-xs ${!n.read ? "text-slate-700 font-semibold" : "text-slate-500 font-medium"}`}>{n.text}</p>
+                          <p className="text-[10px] text-slate-400 mt-0.5">{pendingNotificationIds.includes(String(n.id)) ? "Marking as read..." : n.time}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 pb-28" onClick={() => showNotif && setShowNotif(false)}>
+          {dataError && (
+            <div className="mb-3 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+              {dataError}
+            </div>
+          )}
+          {getScreen()}
+        </div>
+
+        {/* Bottom Nav */}
+        <div className="absolute bottom-0 left-0 right-0 bg-white border-t border-slate-100 px-3 pt-2 pb-6 flex items-center justify-around shadow-lg">
+          {navItems.map((item) => (
+            <button key={item.label} onClick={() => setActiveNav(item.label)}
+              className="flex flex-col items-center gap-1">
+              <div className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all ${
+                activeNav === item.label
+                  ? "bg-gradient-to-br from-teal-500 to-emerald-600 shadow-lg shadow-teal-200"
+                  : "hover:bg-slate-100"
+              }`}>
+                <item.icon className={`w-5 h-5 ${activeNav === item.label ? "text-white" : "text-slate-400"}`} />
+              </div>
+              <span className={`text-[10px] font-bold ${activeNav === item.label ? "text-teal-600" : "text-slate-400"}`}>{item.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+    </div>
+  );
+}
