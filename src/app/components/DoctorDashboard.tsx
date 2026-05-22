@@ -40,35 +40,8 @@ const defaultKnowledgeSources: any[] = [];
 const AI_MODEL_KEYS = {
   apnea: "cnn_bilstm_model.keras",
   spo2: "lstm_SPO2_model.keras",
-  audio: "model_best.pth",
   all: "all_models",
 };
-
-const SPO2_AUTO_FIELDS = [
-  "patient_id",
-  "hour_from_admission",
-  "age",
-  "gender",
-  "comorbidity_index",
-];
-
-const SPO2_MANUAL_FIELDS = [
-  "heart_rate",
-  "respiratory_rate",
-  "spo2_pct",
-  "systolic_bp",
-  "diastolic_bp",
-  "mobility_score",
-  "lactate",
-  "hemoglobin",
-];
-
-const GENDER_OPTIONS = [
-  { value: "female", label: "Female" },
-  { value: "male", label: "Male" },
-  { value: "other", label: "Other" },
-  { value: "unknown", label: "Unknown" },
-];
 
 const CNN_BILSTM_FILE_FIELDS = [
   { key: "apn", label: "Apnea signal (.apn)", accept: ".apn" },
@@ -76,46 +49,12 @@ const CNN_BILSTM_FILE_FIELDS = [
   { key: "hea", label: "Header (.hea)", accept: ".hea" },
 ];
 
-const SPO2_FIELD_LABELS: Record<string, string> = {
-  patient_id: "Patient ID",
-  hour_from_admission: "Hours From Admission",
-  heart_rate: "Heart Rate (bpm)",
-  respiratory_rate: "Respiratory Rate (br/min)",
-  spo2_pct: "SpO2 (%)",
-  systolic_bp: "Systolic BP (mmHg)",
-  diastolic_bp: "Diastolic BP (mmHg)",
-  mobility_score: "Mobility Score",
-  lactate: "Lactate (mmol/L)",
-  hemoglobin: "Hemoglobin (g/dL)",
-  age: "Age",
-  gender: "Gender",
-  comorbidity_index: "Comorbidity Index",
-};
-
-const SPO2_NUMERIC_RULES: Record<string, { min: number; max: number; step?: string }> = {
-  hour_from_admission: { min: 0, max: 8760, step: "0.1" },
-  heart_rate: { min: 20, max: 220, step: "1" },
-  respiratory_rate: { min: 5, max: 80, step: "1" },
-  spo2_pct: { min: 50, max: 100, step: "0.1" },
-  systolic_bp: { min: 60, max: 260, step: "1" },
-  diastolic_bp: { min: 30, max: 150, step: "1" },
-  mobility_score: { min: 0, max: 10, step: "0.1" },
-  lactate: { min: 0, max: 30, step: "0.1" },
-  hemoglobin: { min: 4, max: 22, step: "0.1" },
-  age: { min: 0, max: 120, step: "1" },
-  comorbidity_index: { min: 0, max: 40, step: "1" },
-};
-
 const EMPTY_MANUAL_ERRORS = {
   apnea: {},
   spo2: {},
-  audio: {},
 };
 
-const toNumberOrNull = (value: unknown) => {
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-};
+
 
 const computeAdmissionHours = (admittedAt?: string) => {
   if (!admittedAt) return "";
@@ -125,8 +64,7 @@ const computeAdmissionHours = (admittedAt?: string) => {
   return hours.toFixed(1);
 };
 
-const createManualIntakeForm = (context: any = {}) => {
-  const latestVital = context?.latestVital || {};
+const createManualIntakeForm = (_context: any = {}) => {
 
   return {
     apnea: {
@@ -135,64 +73,25 @@ const createManualIntakeForm = (context: any = {}) => {
       hea: null,
     },
     spo2: {
-      patient_id: String(context?.patientId ?? ""),
-      hour_from_admission: String(context?.hourFromAdmission ?? ""),
-      age: String(context?.age ?? ""),
-      gender: String(context?.gender ?? ""),
-      comorbidity_index: String(context?.comorbidityIndex ?? ""),
-      heart_rate: String(latestVital?.hr ?? ""),
-      respiratory_rate: String(latestVital?.rr ?? ""),
-      spo2_pct: String(latestVital?.spo2 ?? ""),
-      systolic_bp: String(latestVital?.systolic_bp ?? latestVital?.systolicBp ?? ""),
-      diastolic_bp: String(latestVital?.diastolic_bp ?? latestVital?.diastolicBp ?? ""),
-      mobility_score: String(latestVital?.mobility_score ?? ""),
-      lactate: String(latestVital?.lactate ?? ""),
-      hemoglobin: String(latestVital?.hemoglobin ?? ""),
-    },
-    audio: {
-      wav_files: [] as File[],
+      csv_file: null as File | null,
     },
   };
 };
 
 const validateSpo2Form = (form: any) => {
   const errors: Record<string, string> = {};
-  const payload: Record<string, any> = {};
+  const file = form?.spo2?.csv_file;
 
-  for (const field of ["patient_id", "gender"]) {
-    const rawValue = String(form?.spo2?.[field] ?? "").trim();
-    if (!rawValue) {
-      errors[field] = "Required.";
-    } else {
-      payload[field] = rawValue;
-    }
-  }
-
-  for (const [field, bounds] of Object.entries(SPO2_NUMERIC_RULES)) {
-    const rawValue = String(form?.spo2?.[field] ?? "").trim();
-    if (!rawValue) {
-      errors[field] = "Required.";
-      continue;
-    }
-
-    const parsed = toNumberOrNull(rawValue);
-    if (parsed === null) {
-      errors[field] = "Invalid number.";
-      continue;
-    }
-
-    if (parsed < bounds.min || parsed > bounds.max) {
-      errors[field] = `Range ${bounds.min}-${bounds.max}.`;
-      continue;
-    }
-
-    payload[field] = parsed;
+  if (!file) {
+    errors.csv_file = "Required.";
+  } else if (!String(file?.name || "").toLowerCase().endsWith(".csv")) {
+    errors.csv_file = "Expected .csv file.";
   }
 
   return {
     isValid: Object.keys(errors).length === 0,
     errors,
-    payload,
+    payload: file,
   };
 };
 
@@ -219,28 +118,13 @@ const validateApneaFiles = (form: any) => {
   };
 };
 
-const validateAudioFiles = (form: any) => {
-  const errors: Record<string, string> = {};
-  const files = Array.isArray(form?.audio?.wav_files) ? form.audio.wav_files : [];
 
-  if (!files.length) {
-    errors.wav_files = "Add at least one .wav file.";
-  } else if (files.some((file: File) => !String(file?.name || "").toLowerCase().endsWith(".wav"))) {
-    errors.wav_files = "All files must be .wav.";
-  }
-
-  return {
-    isValid: Object.keys(errors).length === 0,
-    errors,
-    payload: files,
-  };
-};
 
 /* ────────────────────────────────────────────────────────────
    HELPERS
 ──────────────────────────────────────────────────────────── */
-const riskColor = (r: number) => r >= 75 ? "text-red-600" : r >= 50 ? "text-amber-600" : r >= 30 ? "text-orange-500" : "text-emerald-600";
-const riskBg = (r: number) => r >= 75 ? "bg-red-500" : r >= 50 ? "bg-amber-500" : r >= 30 ? "bg-orange-400" : "bg-emerald-500";
+const riskColor = (r: number) => r >= 75 ? "text-red-600" : r >= 50 ? "text-amber-600" : "text-emerald-600";
+const riskBg = (r: number) => r >= 75 ? "bg-red-500" : r >= 50 ? "bg-amber-500" : "bg-emerald-500";
 const statusBadge = (s: string) => {
   const map: Record<string, string> = {
     critical: "bg-red-100 text-red-700 border-red-200",
@@ -573,7 +457,7 @@ function DashboardView({
               </AreaChart>
             </ResponsiveContainer>
             <div className="mt-2 grid grid-cols-3 gap-1.5 text-center">
-              {[{ l: "Low", r: "0–40%", c: "emerald" }, { l: "Moderate", r: "41–75%", c: "amber" }, { l: "Critical", r: "76–100%", c: "red", active: true }].map((s) => (
+              {[{ l: "Low", r: "0–49%", c: "emerald" }, { l: "Moderate", r: "50–74%", c: "amber" }, { l: "Critical", r: "75–100%", c: "red", active: true }].map((s) => (
                 <div key={s.l} className={`rounded-xl py-1.5 bg-${s.c}-50 ${s.active ? `ring-2 ring-${s.c}-300` : ""}`}>
                   <p className="text-[10px] text-slate-400">{s.l}</p>
                   <p className={`text-xs font-bold text-${s.c}-700`}>{s.r}</p>
@@ -589,7 +473,7 @@ function DashboardView({
 /* ────────────────────────────────────────────────────────────
    PATIENTS VIEW
 ──────────────────────────────────────────────────────────── */
-function PatientsView({ patients, onAddPatient, isAddingPatient, onDownloadPatientForm, downloadingPatientId }: any) {
+function PatientsView({ patients, onAddPatient, isAddingPatient }: any) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -700,7 +584,7 @@ function PatientsView({ patients, onAddPatient, isAddingPatient, onDownloadPatie
         <div className="overflow-hidden rounded-xl border border-slate-200">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>{["Patient", "Condition", "SpO₂", "HR", "AI Risk", "Status", "Upload"].map(h => (
+              <tr>{["Patient", "Condition", "SpO₂", "HR", "AI Risk", "Status"].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wide">{h}</th>
               ))}</tr>
             </thead>
@@ -731,28 +615,15 @@ function PatientsView({ patients, onAddPatient, isAddingPatient, onDownloadPatie
                       </div>
                     </td>
                     <td className="px-4 py-3"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full border capitalize ${statusBadge(pt.status)}`}>{pt.status}</span></td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onDownloadPatientForm(pt);
-                        }}
-                        className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 hover:shadow-sm transition-all"
-                      >
-                        {downloadingPatientId === pt.id ? "Downloading..." : "Upload (PDF)"}
-                      </button>
-                      <p className="text-[10px] text-slate-400 mt-1">{pt.latestUploadName ? `Data sent: ${pt.latestUploadName}${pt.latestUploadAt ? ` · ${toDateLabel(pt.latestUploadAt)}` : ""}` : "Waiting for patient data"}</p>
-                    </td>
                   </tr>
                   {expanded === pt.id && (
                     <tr key={`${pt.id}-exp`} className="bg-blue-50/30">
-                      <td colSpan={7} className="px-4 py-4">
-                        <div className="grid grid-cols-4 gap-3">
+                      <td colSpan={6} className="px-4 py-4">
+                        <div className="grid grid-cols-3 gap-3">
                           {[
                             { l: "HR (heart rate)", v: formatWithUnit2(pt.hr, "bpm") },
                             { l: "Status", v: pt.status },
                             { l: "Condition", v: pt.condition },
-                            { l: "Upload", v: pt.latestUploadName ? `Data sent (${pt.latestUploadAt ? toDateLabel(pt.latestUploadAt) : "recent"})` : "Waiting for patient data" },
                           ].map(i => (
                             <div key={i.l} className="bg-white rounded-xl p-3 border border-slate-200">
                               <p className="text-xs text-slate-400">{i.l}</p>
@@ -766,7 +637,7 @@ function PatientsView({ patients, onAddPatient, isAddingPatient, onDownloadPatie
                 </>
               ))}
               {!filtered.length && (
-                <tr><td colSpan={7} className="text-center py-10 text-slate-400 text-sm">No patients found.</td></tr>
+                <tr><td colSpan={6} className="text-center py-10 text-slate-400 text-sm">No patients found.</td></tr>
               )}
             </tbody>
           </table>
@@ -956,7 +827,7 @@ function AIInsightsView({
     setManualFormErrors(EMPTY_MANUAL_ERRORS);
   }, [selectedPatient?.id, patientDetails]);
 
-  const clearManualError = (section: "apnea" | "spo2" | "audio", field: string) => {
+  const clearManualError = (section: "apnea" | "spo2", field: string) => {
     setManualFormErrors((previous) => {
       if (!previous?.[section]?.[field]) return previous;
       const nextSectionErrors = { ...previous[section] };
@@ -965,12 +836,12 @@ function AIInsightsView({
     });
   };
 
-  const updateSpo2Field = (field: string, value: string) => {
+  const updateSpo2CsvFile = (file: File | null) => {
     setManualForm((previous: any) => ({
       ...previous,
-      spo2: { ...previous.spo2, [field]: value },
+      spo2: { ...previous.spo2, csv_file: file },
     }));
-    clearManualError("spo2", field);
+    clearManualError("spo2", "csv_file");
   };
 
   const updateApneaFile = (field: string, file: File | null) => {
@@ -981,14 +852,6 @@ function AIInsightsView({
     clearManualError("apnea", field);
   };
 
-  const updateAudioFiles = (files: FileList | null) => {
-    const wavFiles = files ? Array.from(files) : [];
-    setManualForm((previous: any) => ({
-      ...previous,
-      audio: { ...previous.audio, wav_files: wavFiles },
-    }));
-    clearManualError("audio", "wav_files");
-  };
 
   const runApneaModel = async () => {
     const validation = validateApneaFiles(manualForm);
@@ -1009,79 +872,74 @@ function AIInsightsView({
     setManualFormErrors((previous) => ({ ...previous, spo2: validation.errors }));
     if (!validation.isValid) return;
 
-    await onRunManualInsights({
-      target: AI_MODEL_KEYS.spo2,
-      body: { model: AI_MODEL_KEYS.spo2, ...validation.payload },
-    });
-  };
-
-  const runAudioModel = async () => {
-    const validation = validateAudioFiles(manualForm);
-    setManualFormErrors((previous) => ({ ...previous, audio: validation.errors }));
-    if (!validation.isValid) return;
-
     const formData = new FormData();
-    formData.append("model", AI_MODEL_KEYS.audio);
-    manualForm.audio.wav_files.forEach((file: File) => {
-      formData.append("wav_files", file);
-    });
+    formData.append("model", AI_MODEL_KEYS.spo2);
+    formData.append("csv_file", validation.payload);
 
-    await onRunManualInsights({ target: AI_MODEL_KEYS.audio, body: formData });
-  };
-
-  const runAllModels = async () => {
-    const apneaValidation = validateApneaFiles(manualForm);
-    const spo2Validation = validateSpo2Form(manualForm);
-    const audioValidation = validateAudioFiles(manualForm);
-
-    setManualFormErrors({
-      apnea: apneaValidation.errors,
-      spo2: spo2Validation.errors,
-      audio: audioValidation.errors,
-    });
-
-    if (!apneaValidation.isValid || !spo2Validation.isValid || !audioValidation.isValid) return;
-
-    const formData = new FormData();
-    formData.append("model", AI_MODEL_KEYS.all);
-    formData.append("spo2_payload", JSON.stringify({
-      model: AI_MODEL_KEYS.spo2,
-      ...spo2Validation.payload,
-    }));
-    formData.append("apn_file", manualForm.apnea.apn);
-    formData.append("dat_file", manualForm.apnea.dat);
-    formData.append("hea_file", manualForm.apnea.hea);
-    manualForm.audio.wav_files.forEach((file: File) => {
-      formData.append("wav_files", file);
-    });
-
-    await onRunManualInsights({ target: AI_MODEL_KEYS.all, body: formData });
+    await onRunManualInsights({ target: AI_MODEL_KEYS.spo2, body: formData });
   };
 
   const isRunningApnea = Boolean(runningManualInsights?.[AI_MODEL_KEYS.apnea]);
   const isRunningSpo2 = Boolean(runningManualInsights?.[AI_MODEL_KEYS.spo2]);
-  const isRunningAudio = Boolean(runningManualInsights?.[AI_MODEL_KEYS.audio]);
-  const isRunningAll = Boolean(runningManualInsights?.[AI_MODEL_KEYS.all]);
-  const isRunningAny = Boolean(isRunningApnea || isRunningSpo2 || isRunningAudio || isRunningAll);
+  const isRunningAny = Boolean(isRunningApnea || isRunningSpo2);
 
   const latestRisk = aiInsights || patientDetails?.latestRisk;
   const latestVital = patientDetails?.latestVital;
   const latestEnvironment = patientDetails?.latestEnvironment;
   const modelOutputs = aiInsights?.modelOutputs ? Object.values(aiInsights.modelOutputs) : [];
   const ragSources = aiInsights?.rag?.sources || [];
-  const ragExplanation = aiInsights?.rag?.explanation || "No RAG explanation available for this patient yet.";
+  const ragExplanation =
+    aiInsights?.rag?.detailed_summary ||
+    aiInsights?.rag?.summary ||
+    aiInsights?.rag?.explanation ||
+    aiInsights?.explanation ||
+    "No RAG explanation available for this patient yet.";
   const [showAllKnowledgeSources, setShowAllKnowledgeSources] = useState(false);
 
   const maxVisibleSources = 6;
-  const maxSourceTextLength = 180;
+
+  const extractPageNumber = (item: any) => {
+    const directPage = Number(item?.page);
+    if (Number.isFinite(directPage) && directPage > 0) {
+      return directPage;
+    }
+
+    const reference = String(item?.reference || "");
+    const match = reference.match(/p\.\s*(\d+)/i) || reference.match(/page\s*(\d+)/i);
+
+    if (match?.[1]) {
+      const parsed = Number(match[1]);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    }
+
+    return null;
+  };
 
   const normalizeSource = (item: any, origin: "rag" | "knowledge", index: number) => {
-    const rawRelevance = Number(item?.relevance ?? 0);
+    const rawRelevance = Number(item?.relevance ?? item?.score ?? 0);
     const relevance = rawRelevance <= 1 ? Math.round(rawRelevance * 100) : Math.round(rawRelevance);
+
+    const source = String(
+      item?.source ||
+      item?.title ||
+      item?.reference ||
+      `Clinical source ${index + 1}`,
+    ).trim();
+
+    const title = String(
+      item?.title ||
+      item?.source ||
+      item?.reference ||
+      source,
+    ).trim();
+
+    const page = extractPageNumber(item);
+
     return {
-      badge: String(item?.badge || item?.source || `SRC-${index + 1}`),
-      reference: String(item?.reference || item?.source || "Clinical guideline"),
-      text: String(item?.text || item?.snippet || "Clinical excerpt unavailable."),
+      source,
+      title,
+      badge: String(item?.badge || source).replace(/\s+/g, "_"),
+      page,
       relevance: Math.max(0, Math.min(100, Number.isFinite(relevance) ? relevance : 0)),
       origin,
     };
@@ -1089,32 +947,60 @@ function AIInsightsView({
 
   const mergedKnowledgeSources = useMemo(() => {
     const normalized = [
-      ...(Array.isArray(ragSources) ? ragSources : []).map((item: any, index: number) => normalizeSource(item, "rag", index)),
-      ...(Array.isArray(knowledgeSources) ? knowledgeSources : []).map((item: any, index: number) => normalizeSource(item, "knowledge", index)),
+      ...(Array.isArray(ragSources) ? ragSources : []).map((item: any, index: number) =>
+        normalizeSource(item, "rag", index),
+      ),
+      ...(Array.isArray(knowledgeSources) ? knowledgeSources : []).map((item: any, index: number) =>
+        normalizeSource(item, "knowledge", index),
+      ),
     ];
 
-    const dedupe = new Set<string>();
-    const unique = normalized.filter((item) => {
-      const key = `${item.reference.toLowerCase()}::${item.text.toLowerCase().slice(0, 120)}`;
-      if (dedupe.has(key)) return false;
-      dedupe.add(key);
-      return true;
-    });
+    const grouped = new Map<string, any>();
 
-    return unique.sort((a, b) => {
-      if (a.origin !== b.origin) return a.origin === "rag" ? -1 : 1;
-      return b.relevance - a.relevance;
-    });
+    for (const item of normalized) {
+      const key = item.source.toLowerCase();
+
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          source: item.source,
+          title: item.title,
+          badge: item.badge,
+          pages: [] as number[],
+          relevance: item.relevance,
+          origin: item.origin,
+        });
+      }
+
+      const current = grouped.get(key);
+
+      if (item.page && !current.pages.includes(item.page)) {
+        current.pages.push(item.page);
+      }
+
+      current.relevance = Math.max(current.relevance, item.relevance);
+
+      if (item.origin === "rag") {
+        current.origin = "rag";
+      }
+    }
+
+    return Array.from(grouped.values())
+      .map((item) => ({
+        ...item,
+        pages: item.pages.sort((a: number, b: number) => a - b),
+        pagesLabel: item.pages.length
+          ? `Pages used: ${item.pages.map((page: number) => `p. ${page}`).join(", ")}`
+          : "Pages used: not specified",
+      }))
+      .sort((a, b) => {
+        if (a.origin !== b.origin) return a.origin === "rag" ? -1 : 1;
+        return b.relevance - a.relevance;
+      });
   }, [ragSources, knowledgeSources]);
 
   const visibleKnowledgeSources = showAllKnowledgeSources
     ? mergedKnowledgeSources
     : mergedKnowledgeSources.slice(0, maxVisibleSources);
-
-  const toCompactText = (text: string) => {
-    if (showAllKnowledgeSources || text.length <= maxSourceTextLength) return text;
-    return `${text.slice(0, maxSourceTextLength).trimEnd()}...`;
-  };
 
   return (
     <div className="space-y-5">
@@ -1149,8 +1035,8 @@ function AIInsightsView({
               </div>
               <button
                 onClick={runApneaModel}
-                disabled={isRunningApnea || isRunningAll || !selectedPatient?.id}
-                className={`px-3 py-2 rounded-xl text-xs font-semibold ${isRunningApnea || isRunningAll ? "bg-blue-300 text-white cursor-not-allowed" : "bg-blue-600 text-white hover:bg-blue-700"}`}
+                disabled={isRunningApnea || !selectedPatient?.id}
+                className={`px-3 py-2 rounded-xl text-xs font-semibold ${isRunningApnea ? "bg-blue-300 text-white cursor-not-allowed" : "bg-blue-600 text-white hover:bg-blue-700"}`}
               >
                 {isRunningApnea ? "Running..." : "Run AI + RAG"}
               </button>
@@ -1191,137 +1077,44 @@ function AIInsightsView({
             <div className="flex items-start justify-between gap-3 mb-3">
               <div>
                 <p className="text-blue-900 font-bold text-sm">Model 2 · LSTM SpO2 Deterioration</p>
-                <p className="text-xs text-slate-500">Tabular features · Target: deterioration_next_12h</p>
-                <p className="text-[11px] text-slate-400 mt-1">Auto-filled: patient_id, hour_from_admission, age, gender, comorbidity_index</p>
+                <p className="text-xs text-slate-500">Input: CSV history · Target: deterioration_next_12h</p>
+                <p className="text-[11px] text-slate-400 mt-1">The file must contain previous rows for the same patient.</p>
               </div>
               <button
                 onClick={runSpo2Model}
-                disabled={isRunningSpo2 || isRunningAll || !selectedPatient?.id}
-                className={`px-3 py-2 rounded-xl text-xs font-semibold ${isRunningSpo2 || isRunningAll ? "bg-blue-300 text-white cursor-not-allowed" : "bg-blue-600 text-white hover:bg-blue-700"}`}
+                disabled={isRunningSpo2 || !selectedPatient?.id}
+                className={`px-3 py-2 rounded-xl text-xs font-semibold ${isRunningSpo2 ? "bg-blue-300 text-white cursor-not-allowed" : "bg-blue-600 text-white hover:bg-blue-700"}`}
               >
                 {isRunningSpo2 ? "Running..." : "Run AI + RAG"}
               </button>
             </div>
-            <div className="space-y-3">
-              <div>
-                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">Auto-filled fields</p>
-                <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                  {SPO2_AUTO_FIELDS.map((field) => {
-                    const bounds = SPO2_NUMERIC_RULES[field];
-                    const isGender = field === "gender";
-                    const isPatientId = field === "patient_id";
-                    return (
-                      <div key={field}>
-                        <p className="text-xs text-slate-500 mb-1">
-                          {SPO2_FIELD_LABELS[field]}
-                          <span className="text-[10px] text-emerald-600 font-semibold uppercase ml-1">Auto</span>
-                        </p>
-                        {isGender ? (
-                          <select
-                            value={manualForm?.spo2?.gender || ""}
-                            onChange={(event) => updateSpo2Field("gender", event.target.value)}
-                            className={`w-full border rounded-xl px-3 py-2 text-sm ${manualFormErrors.spo2?.gender ? "border-red-300 bg-red-50" : "border-slate-200"}`}
-                          >
-                            <option value="">Select</option>
-                            {GENDER_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <input
-                            type={isPatientId ? "text" : "number"}
-                            {...(!isPatientId && bounds ? { min: bounds.min, max: bounds.max, step: bounds.step || "1" } : {})}
-                            value={manualForm?.spo2?.[field] ?? ""}
-                            onChange={(event) => updateSpo2Field(field, event.target.value)}
-                            className={`w-full border rounded-xl px-3 py-2 text-sm ${manualFormErrors.spo2?.[field] ? "border-red-300 bg-red-50" : "border-slate-200"}`}
-                          />
-                        )}
-                        {manualFormErrors.spo2?.[field] && (
-                          <p className="text-[11px] text-red-600 mt-1">{manualFormErrors.spo2[field]}</p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-              <div>
-                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">Clinical measurements</p>
-                <div className="grid grid-cols-4 gap-3">
-                  {SPO2_MANUAL_FIELDS.map((field) => (
-                    <div key={field}>
-                      <p className="text-xs text-slate-500 mb-1">{SPO2_FIELD_LABELS[field]}</p>
-                      <input
-                        type="number"
-                        min={SPO2_NUMERIC_RULES[field].min}
-                        max={SPO2_NUMERIC_RULES[field].max}
-                        step={SPO2_NUMERIC_RULES[field].step || "1"}
-                        value={manualForm?.spo2?.[field] ?? ""}
-                        onChange={(event) => updateSpo2Field(field, event.target.value)}
-                        className={`w-full border rounded-xl px-3 py-2 text-sm ${manualFormErrors.spo2?.[field] ? "border-red-300 bg-red-50" : "border-slate-200"}`}
-                      />
-                      {manualFormErrors.spo2?.[field] && (
-                        <p className="text-[11px] text-red-600 mt-1">{manualFormErrors.spo2[field]}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
+            <div>
+              <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">CSV patient history</p>
+              <input
+                type="file"
+                accept=".csv"
+                onChange={(event) => updateSpo2CsvFile(event.target.files?.[0] ?? null)}
+                className={`w-full border rounded-xl px-3 py-2 text-xs ${manualFormErrors.spo2?.csv_file ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"}`}
+              />
+              {manualForm?.spo2?.csv_file && (
+                <p className="text-[11px] text-slate-500 mt-1 truncate">Selected: {manualForm.spo2.csv_file.name}</p>
+              )}
+              {manualFormErrors.spo2?.csv_file && (
+                <p className="text-[11px] text-red-600 mt-1">{manualFormErrors.spo2.csv_file}</p>
+              )}
+              <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
+                <p className="text-[11px] font-semibold text-blue-800 mb-1">Required CSV columns</p>
+                <p className="text-[11px] text-blue-700 leading-relaxed">
+                  patient_id, hour_from_admission, age, gender, comorbidity_index, heart_rate, respiratory_rate, spo2 or spo2_pct, systolic_bp, diastolic_bp, mobility_score, lactate, hemoglobin.
+                </p>
               </div>
             </div>
             {Object.keys(manualFormErrors.spo2 || {}).length > 0 && (
               <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
-                <p className="text-[11px] font-semibold text-red-700 mb-1">Fix input errors before running the LSTM model.</p>
+                <p className="text-[11px] font-semibold text-red-700 mb-1">Fix the CSV file before running the LSTM model.</p>
                 <ul className="list-disc pl-4 text-[11px] text-red-700 space-y-0.5">
                   {Object.entries(manualFormErrors.spo2 || {}).map(([field, error]) => (
-                    <li key={field}>{SPO2_FIELD_LABELS[field] || field}: {error}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-4">
-            <div className="flex items-start justify-between gap-3 mb-3">
-              <div>
-                <p className="text-blue-900 font-bold text-sm">Model 3 · Respiratory Audio Spectrograms</p>
-                <p className="text-xs text-slate-500">Input: .wav files (spectrograms generated server-side)</p>
-              </div>
-              <button
-                onClick={runAudioModel}
-                disabled={isRunningAudio || isRunningAll || !selectedPatient?.id}
-                className={`px-3 py-2 rounded-xl text-xs font-semibold ${isRunningAudio || isRunningAll ? "bg-blue-300 text-white cursor-not-allowed" : "bg-blue-600 text-white hover:bg-blue-700"}`}
-              >
-                {isRunningAudio ? "Running..." : "Run AI + RAG"}
-              </button>
-            </div>
-            <div>
-              <p className="text-xs text-slate-500 mb-1">WAV files</p>
-              <input
-                type="file"
-                accept=".wav"
-                multiple
-                onChange={(event) => updateAudioFiles(event.target.files)}
-                className={`w-full border rounded-xl px-3 py-2 text-xs ${manualFormErrors.audio?.wav_files ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"}`}
-              />
-              {manualForm?.audio?.wav_files?.length > 0 && (
-                <div className="mt-1 text-[11px] text-slate-500 space-y-0.5">
-                  {manualForm.audio.wav_files.slice(0, 3).map((file: File) => (
-                    <p key={file.name}>• {file.name}</p>
-                  ))}
-                  {manualForm.audio.wav_files.length > 3 && (
-                    <p>+{manualForm.audio.wav_files.length - 3} more files</p>
-                  )}
-                </div>
-              )}
-              {manualFormErrors.audio?.wav_files && (
-                <p className="text-[11px] text-red-600 mt-1">{manualFormErrors.audio.wav_files}</p>
-              )}
-            </div>
-            {Object.keys(manualFormErrors.audio || {}).length > 0 && (
-              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
-                <p className="text-[11px] font-semibold text-red-700 mb-1">Fix missing audio files.</p>
-                <ul className="list-disc pl-4 text-[11px] text-red-700 space-y-0.5">
-                  {Object.entries(manualFormErrors.audio || {}).map(([field, error]) => (
-                    <li key={field}>WAV files: {error}</li>
+                    <li key={field}>{field}: {error}</li>
                   ))}
                 </ul>
               </div>
@@ -1330,13 +1123,6 @@ function AIInsightsView({
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            onClick={runAllModels}
-            disabled={isRunningAny || !selectedPatient?.id}
-            className={`px-4 py-2.5 rounded-xl text-sm font-semibold ${isRunningAny ? "bg-indigo-300 text-white cursor-not-allowed" : "bg-indigo-600 text-white hover:bg-indigo-700"}`}
-          >
-            {isRunningAll ? "Running all..." : "Run AI + RAG (All Models)"}
-          </button>
           <button
             onClick={onSendResultsToPatient}
             disabled={sendingResults || !selectedPatient?.id}
@@ -1377,7 +1163,9 @@ function AIInsightsView({
           <BookOpen className="w-4 h-4 text-indigo-600" />
           <h3 className="text-blue-900 font-bold text-sm">RAG Summary From Uploaded Patient Data</h3>
         </div>
-        <p className="text-slate-700 text-sm bg-slate-50 border border-slate-200 rounded-xl p-3">{ragExplanation}</p>
+        <div className="text-slate-700 text-sm leading-relaxed whitespace-pre-line bg-slate-50 border border-slate-200 rounded-xl p-4">
+          {ragExplanation}
+        </div>
       </div>
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
         <div className="flex items-center gap-2 mb-4">
@@ -1392,25 +1180,49 @@ function AIInsightsView({
             </div>
           )}
           {visibleKnowledgeSources.map((item: any, index: number) => (
-            <div key={`${item.badge || "source"}-${index}`} className="flex items-start gap-3 p-4 bg-slate-50 border border-slate-200 rounded-xl">
-              <span className="bg-blue-700 text-white text-xs font-black px-2 py-1 rounded-lg flex-shrink-0">{item.badge}</span>
+            <div
+              key={`${item.source || "source"}-${index}`}
+              className="flex items-start gap-3 p-4 bg-slate-50 border border-slate-200 rounded-xl"
+            >
+              <span className="bg-blue-700 text-white text-xs font-black px-2 py-1 rounded-lg flex-shrink-0">
+                {item.badge}
+              </span>
+
               <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${item.origin === "rag" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-600 border-slate-200"}`}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      item.origin === "rag"
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        : "bg-slate-100 text-slate-600 border-slate-200"
+                    }`}
+                  >
                     {item.origin === "rag" ? "Used in prediction" : "Knowledge base"}
                   </span>
                 </div>
-                <p className="text-slate-700 text-sm leading-relaxed">{toCompactText(item.text)}</p>
-                <div className="flex items-center gap-3 mt-2">
-                  <div className="flex items-center gap-1">
-                    <BookOpen className="w-3 h-3 text-slate-400" />
-                    <span className="text-slate-400 text-xs">{item.reference}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 ml-auto">
-                    <span className="text-xs text-emerald-600 font-semibold">{item.relevance}% relevance</span>
-                    <div className="w-12 bg-slate-200 rounded-full h-1">
-                      <div className="bg-emerald-500 h-1 rounded-full" style={{ width: `${item.relevance}%` }} />
-                    </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <BookOpen className="w-3.5 h-3.5 text-slate-400" />
+
+                  <span className="text-slate-700 text-sm font-semibold">
+                    {item.source}
+                  </span>
+
+                  <span className="text-slate-400 text-xs">
+                    {item.pagesLabel}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1.5 mt-2">
+                  <span className="text-xs text-emerald-600 font-semibold">
+                    {item.relevance}% relevance
+                  </span>
+
+                  <div className="w-12 bg-slate-200 rounded-full h-1">
+                    <div
+                      className="bg-emerald-500 h-1 rounded-full"
+                      style={{ width: `${item.relevance}%` }}
+                    />
                   </div>
                 </div>
               </div>
@@ -1889,12 +1701,9 @@ export function DoctorDashboard() {
   const [isDownloadingReport, setIsDownloadingReport] = useState(false);
   const [analyticsMetrics, setAnalyticsMetrics] = useState({ totalAlerts: 0, criticalEvents: 0, resolved: 0, avgResponseMinutes: null as number | null });
   const [aiInsights, setAiInsights] = useState<any>(null);
-  const [downloadingPatientId, setDownloadingPatientId] = useState<string | null>(null);
   const [runningManualInsights, setRunningManualInsights] = useState<Record<string, boolean>>(() => ({
     [AI_MODEL_KEYS.apnea]: false,
     [AI_MODEL_KEYS.spo2]: false,
-    [AI_MODEL_KEYS.audio]: false,
-    [AI_MODEL_KEYS.all]: false,
   }));
   const [sendingResults, setSendingResults] = useState(false);
   const [actionLoading, setActionLoading] = useState({
@@ -2003,13 +1812,7 @@ export function DoctorDashboard() {
       }
 
       const seenDoctorNotifKeys = new Set<string>();
-      const patientFormUnreadCodes = new Set<string>();
-      (notificationsPayload?.notifications || []).forEach((notification: any) => {
-        if (notification?.metadata?.type === "patient-form" && !notification?.read) {
-          patientFormUnreadCodes.add(String(notification?.metadata?.patientCode || notification?._id || ""));
-        }
-      });
-      setPatientDataAlertCount(patientFormUnreadCodes.size);
+      setPatientDataAlertCount(0);
 
       setNotifs((notificationsPayload?.notifications || [])
         .filter((notification: any) => notification?.metadata?.type === "patient-chat")
@@ -2089,6 +1892,15 @@ export function DoctorDashboard() {
       await apiRequest("/doctor/notifications/read-all", { method: "PATCH", auth: true });
     } catch {
       // noop
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await logout();
+    } finally {
+      clearSession();
+      navigate("/", { replace: true });
     }
   };
 
@@ -2291,47 +2103,6 @@ export function DoctorDashboard() {
     }
   };
 
-  const handleDownloadPatientForm = async (patient: any) => {
-    if (!patient?.id || downloadingPatientId) return;
-
-    setDownloadingPatientId(patient.id);
-    try {
-      const token = getToken();
-      if (!token) {
-        return;
-      }
-
-      const response = await fetch(`${API_BASE_URL}/doctor/patients/${encodeURIComponent(patient.id)}/intake-form/pdf`, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) {
-        throw new Error("Unable to download patient form PDF.");
-      }
-
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = `${patient.id}-patient-form.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(objectUrl);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to download patient form.";
-      setDataError(message);
-    } finally {
-      setDownloadingPatientId(null);
-    }
-  };
-
-  const handleSignOut = async () => {
-    await logout();
-    navigate("/", { replace: true });
-  };
-
   const handleRunManualInsights = async (request: { target?: string; body?: any }) => {
     if (!selectedPatient?.id) return;
 
@@ -2395,8 +2166,6 @@ export function DoctorDashboard() {
           patients={patientsData}
           onAddPatient={handleAddPatient}
           isAddingPatient={actionLoading.addPatient}
-          onDownloadPatientForm={handleDownloadPatientForm}
-          downloadingPatientId={downloadingPatientId}
         />
       );
       case "AI Insights": return (

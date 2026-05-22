@@ -31,12 +31,13 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const requestAiService = async (path, options = {}) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+  const isMultipart = typeof FormData !== "undefined" && options.body instanceof FormData;
 
   try {
     const response = await fetch(`${DEFAULT_AI_SERVICE_URL}${path}`, {
       ...options,
       headers: {
-        "Content-Type": "application/json",
+        ...(isMultipart ? {} : { "Content-Type": "application/json" }),
         ...(options.headers || {}),
       },
       signal: controller.signal,
@@ -444,6 +445,24 @@ export const runManualAiFromAiService = async ({
       files: buildManualFilePayload(uploadedFiles),
       top_k_guidelines: 4,
     }),
+  });
+};
+
+export const runSpo2CsvFromAiService = async ({ csvFile, topKGuidelines = 4 } = {}) => {
+  if (!csvFile?.buffer) {
+    throw new Error("CSV file is required for Model 2 LSTM SpO2 inference.");
+  }
+
+  const formData = new FormData();
+  const blob = new Blob([csvFile.buffer], { type: csvFile.mimetype || "text/csv" });
+  formData.append("file", blob, csvFile.originalname || "spo2_history.csv");
+
+  const params = new URLSearchParams();
+  params.set("top_k_guidelines", String(Math.max(0, Math.min(20, Number(topKGuidelines) || 4))));
+
+  return requestAiService(`/api/v1/spo2-lstm/predict-csv?${params.toString()}`, {
+    method: "POST",
+    body: formData,
   });
 };
 

@@ -45,6 +45,24 @@ const ensureCurrentPatientData = async (userId) => {
   return profile;
 };
 
+const formatDoctorAiData = ({ profile, latestVital, latestEnvironment, latestRisk, medications = [] }) => {
+  const sentResult = profile.latestDoctorSentResult || null;
+  const insights = sentResult?.insights || profile.latestAiInsights || null;
+  const doctorInput = sentResult?.doctorInput || insights?.doctorInput || profile.latestDoctorAiInput || null;
+
+  return {
+    patientId: profile.patientCode,
+    input: doctorInput,
+    insights,
+    sentResult,
+    latestVital,
+    latestEnvironment,
+    latestRisk,
+    medications,
+    updatedAt: doctorInput?.usedAt || sentResult?.sentAt || profile.updatedAt || null,
+  };
+};
+
 patientRouter.get(
   "/me/home",
   asyncHandler(async (req, res) => {
@@ -76,10 +94,42 @@ patientRouter.get(
         latestEnvironment,
         latestRisk,
         latestDoctorSentResult: profile.latestDoctorSentResult || null,
+        doctorAiData: formatDoctorAiData({
+          profile,
+          latestVital,
+          latestEnvironment,
+          latestRisk,
+          medications,
+        }),
         medications,
         unreadNotifications,
         aiInsight: computedInsight,
       },
+    });
+  }),
+);
+
+patientRouter.get(
+  "/me/doctor-ai-data",
+  asyncHandler(async (req, res) => {
+    const profile = await ensureCurrentPatientData(req.user.userId);
+
+    const [latestVital, latestEnvironment, latestRisk, medications] = await Promise.all([
+      VitalRecord.findOne({ patient: req.user.userId }).sort({ timestamp: -1 }),
+      EnvironmentSnapshot.findOne({ patient: req.user.userId }).sort({ timestamp: -1 }),
+      RiskAssessment.findOne({ patient: req.user.userId }).sort({ createdAt: -1 }),
+      MedicationSchedule.find({ patient: req.user.userId }).sort({ createdAt: 1 }),
+    ]);
+
+    return res.json({
+      success: true,
+      doctorAiData: formatDoctorAiData({
+        profile,
+        latestVital,
+        latestEnvironment,
+        latestRisk,
+        medications,
+      }),
     });
   }),
 );

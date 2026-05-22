@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router";
 import {
   Shield, Wind, Heart, Bell, ChevronRight, Activity,
@@ -15,6 +15,7 @@ import {
 import { ApiError, apiRequest } from "../lib/api";
 import { logout } from "../lib/auth";
 import { clearSession, getSession } from "../lib/session";
+import { PatientDoctorAiData } from "./PatientDoctorAiData";
 
 /* ────────────────────────────────────────────────────────────
    UI DATA
@@ -38,119 +39,6 @@ type ChatMessageItem = {
   text: string;
   time: string;
 };
-
-const INTAKE_DEFAULTS = {
-  age: 45,
-  sex: "other",
-  height_cm: 170,
-  weight_kg: 70,
-  smoking_status: "non_smoker",
-  spo2: 96,
-  heart_rate: 80,
-  respiratory_rate: 18,
-  temperature: 37,
-  cough: false,
-  shortness_of_breath: false,
-  wheezing: false,
-  chest_pain: false,
-  fatigue: false,
-  asthma: false,
-  copd: false,
-  hypertension: false,
-  diabetes: false,
-  heart_disease: false,
-  air_quality_index: 60,
-  environment_temperature: 24,
-  humidity: 50,
-};
-
-const INTAKE_NUMERIC_RULES: Record<string, { min: number; max: number; step?: string }> = {
-  age: { min: 1, max: 120, step: "1" },
-  height_cm: { min: 90, max: 260, step: "0.1" },
-  weight_kg: { min: 20, max: 350, step: "0.1" },
-  spo2: { min: 70, max: 100, step: "0.1" },
-  heart_rate: { min: 20, max: 220, step: "1" },
-  respiratory_rate: { min: 5, max: 80, step: "1" },
-  temperature: { min: 30, max: 45, step: "0.1" },
-  air_quality_index: { min: 0, max: 500, step: "1" },
-  environment_temperature: { min: -30, max: 60, step: "0.1" },
-  humidity: { min: 0, max: 100, step: "0.1" },
-};
-
-const INTAKE_LABELS: Record<string, string> = {
-  age: "Age",
-  sex: "Sex",
-  height_cm: "Height (cm)",
-  weight_kg: "Weight (kg)",
-  smoking_status: "Smoking Status",
-  spo2: "SpO2 (%)",
-  heart_rate: "Heart Rate (bpm)",
-  respiratory_rate: "Respiratory Rate (br/min)",
-  temperature: "Body Temperature (C)",
-  cough: "Cough",
-  shortness_of_breath: "Shortness of Breath",
-  wheezing: "Wheezing",
-  chest_pain: "Chest Pain",
-  fatigue: "Fatigue",
-  asthma: "Asthma",
-  copd: "COPD",
-  hypertension: "Hypertension",
-  diabetes: "Diabetes",
-  heart_disease: "Heart Disease",
-  air_quality_index: "Air Quality Index",
-  environment_temperature: "Environment Temperature (C)",
-  humidity: "Humidity (%)",
-};
-
-const SEX_OPTIONS = [
-  { value: "male", label: "Male" },
-  { value: "female", label: "Female" },
-  { value: "other", label: "Other" },
-];
-
-const SMOKING_OPTIONS = [
-  { value: "non_smoker", label: "Non smoker" },
-  { value: "former_smoker", label: "Former smoker" },
-  { value: "current_smoker", label: "Current smoker" },
-];
-
-const BOOLEAN_FORM_FIELDS = [
-  "cough",
-  "shortness_of_breath",
-  "wheezing",
-  "chest_pain",
-  "fatigue",
-  "asthma",
-  "copd",
-  "hypertension",
-  "diabetes",
-  "heart_disease",
-];
-
-const createIntakeDraft = (source: any = {}) => ({
-  age: String(source?.age ?? INTAKE_DEFAULTS.age),
-  sex: String(source?.sex ?? INTAKE_DEFAULTS.sex),
-  height_cm: String(source?.height_cm ?? INTAKE_DEFAULTS.height_cm),
-  weight_kg: String(source?.weight_kg ?? INTAKE_DEFAULTS.weight_kg),
-  smoking_status: String(source?.smoking_status ?? INTAKE_DEFAULTS.smoking_status),
-  spo2: String(source?.spo2 ?? INTAKE_DEFAULTS.spo2),
-  heart_rate: String(source?.heart_rate ?? INTAKE_DEFAULTS.heart_rate),
-  respiratory_rate: String(source?.respiratory_rate ?? INTAKE_DEFAULTS.respiratory_rate),
-  temperature: String(source?.temperature ?? INTAKE_DEFAULTS.temperature),
-  cough: Boolean(source?.cough ?? INTAKE_DEFAULTS.cough),
-  shortness_of_breath: Boolean(source?.shortness_of_breath ?? INTAKE_DEFAULTS.shortness_of_breath),
-  wheezing: Boolean(source?.wheezing ?? INTAKE_DEFAULTS.wheezing),
-  chest_pain: Boolean(source?.chest_pain ?? INTAKE_DEFAULTS.chest_pain),
-  fatigue: Boolean(source?.fatigue ?? INTAKE_DEFAULTS.fatigue),
-  asthma: Boolean(source?.asthma ?? INTAKE_DEFAULTS.asthma),
-  copd: Boolean(source?.copd ?? INTAKE_DEFAULTS.copd),
-  hypertension: Boolean(source?.hypertension ?? INTAKE_DEFAULTS.hypertension),
-  diabetes: Boolean(source?.diabetes ?? INTAKE_DEFAULTS.diabetes),
-  heart_disease: Boolean(source?.heart_disease ?? INTAKE_DEFAULTS.heart_disease),
-  air_quality_index: String(source?.air_quality_index ?? INTAKE_DEFAULTS.air_quality_index),
-  environment_temperature: String(source?.environment_temperature ?? INTAKE_DEFAULTS.environment_temperature),
-  humidity: String(source?.humidity ?? INTAKE_DEFAULTS.humidity),
-});
 
 const formatTwoDecimals = (value: unknown) => {
   const parsed = typeof value === "number" ? value : Number(value);
@@ -451,265 +339,6 @@ function HomeScreen({ homeData, meds, onToggleMedication, pendingMedicationIds, 
 /* ────────────────────────────────────────────────────────────
    HISTORY SCREEN
 ──────────────────────────────────────────────────────────── */
-function HistoryScreen({ intakeForm, onSaveIntakeForm, savingIntakeForm }: any) {
-  const [formSent, setFormSent] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [formState, setFormState] = useState<any>(createIntakeDraft(intakeForm));
-
-  useEffect(() => {
-    setFormState(createIntakeDraft(intakeForm));
-    setErrors({});
-    setFormSent(false);
-  }, [intakeForm]);
-
-  const updateField = (field: string, value: string | boolean) => {
-    setFormSent(false);
-    setFormState((previous: any) => ({ ...previous, [field]: value }));
-    setErrors((previous) => {
-      if (!previous[field]) return previous;
-      const nextErrors = { ...previous };
-      delete nextErrors[field];
-      return nextErrors;
-    });
-  };
-
-  const previewPayload = useMemo(() => {
-    const preview: Record<string, any> = {};
-
-    for (const field of Object.keys(INTAKE_NUMERIC_RULES)) {
-      const rawValue = String(formState[field] ?? "").trim();
-      if (!rawValue) {
-        preview[field] = null;
-        continue;
-      }
-      const parsed = Number(rawValue);
-      preview[field] = Number.isFinite(parsed) ? parsed : null;
-    }
-
-    preview.sex = String(formState.sex || "").trim().toLowerCase();
-    preview.smoking_status = String(formState.smoking_status || "").trim().toLowerCase();
-
-    for (const field of BOOLEAN_FORM_FIELDS) {
-      preview[field] = Boolean(formState[field]);
-    }
-
-    return preview;
-  }, [formState]);
-
-  const validateAndBuildPayload = () => {
-    const nextErrors: Record<string, string> = {};
-    const payload: Record<string, any> = {};
-
-    for (const [field, bounds] of Object.entries(INTAKE_NUMERIC_RULES)) {
-      const rawValue = String(formState[field] ?? "").trim();
-      if (!rawValue) {
-        nextErrors[field] = "This field is required.";
-        continue;
-      }
-
-      const parsed = Number(rawValue);
-      if (!Number.isFinite(parsed)) {
-        nextErrors[field] = "Must be a valid number.";
-        continue;
-      }
-
-      if (parsed < bounds.min || parsed > bounds.max) {
-        nextErrors[field] = `Must be between ${bounds.min} and ${bounds.max}.`;
-        continue;
-      }
-
-      payload[field] = parsed;
-    }
-
-    const sex = String(formState.sex || "").trim().toLowerCase();
-    if (!sex) {
-      nextErrors.sex = "This field is required.";
-    } else if (!["male", "female", "other"].includes(sex)) {
-      nextErrors.sex = "Must be one of: male, female, other.";
-    } else {
-      payload.sex = sex;
-    }
-
-    const smokingStatus = String(formState.smoking_status || "").trim().toLowerCase();
-    if (!smokingStatus) {
-      nextErrors.smoking_status = "This field is required.";
-    } else if (!["non_smoker", "former_smoker", "current_smoker"].includes(smokingStatus)) {
-      nextErrors.smoking_status = "Must be one of: non_smoker, former_smoker, current_smoker.";
-    } else {
-      payload.smoking_status = smokingStatus;
-    }
-
-    for (const field of BOOLEAN_FORM_FIELDS) {
-      payload[field] = Boolean(formState[field]);
-    }
-
-    return {
-      isValid: Object.keys(nextErrors).length === 0,
-      errors: nextErrors,
-      payload,
-    };
-  };
-
-  const handleSave = async () => {
-    const validation = validateAndBuildPayload();
-    setErrors(validation.errors);
-
-    if (!validation.isValid) {
-      setFormSent(false);
-      return;
-    }
-
-    const ok = await onSaveIntakeForm(validation.payload);
-    setFormSent(Boolean(ok));
-  };
-
-  const renderNumericField = (field: string) => {
-    const bounds = INTAKE_NUMERIC_RULES[field];
-    const hasError = Boolean(errors[field]);
-
-    return (
-      <div key={field}>
-        <p className="text-xs text-slate-500 mb-1">{INTAKE_LABELS[field]}</p>
-        <input
-          type="number"
-          min={bounds.min}
-          max={bounds.max}
-          step={bounds.step || "1"}
-          value={formState[field]}
-          onChange={(event) => updateField(field, event.target.value)}
-          className={`w-full border rounded-xl px-3 py-2.5 text-sm ${hasError ? "border-red-300 bg-red-50" : "border-slate-200"}`}
-        />
-        {hasError && <p className="text-[11px] text-red-600 mt-1">{errors[field]}</p>}
-      </div>
-    );
-  };
-
-  const renderBooleanField = (field: string) => (
-    <button
-      key={field}
-      type="button"
-      onClick={() => updateField(field, !Boolean(formState[field]))}
-      className={`flex items-center justify-between rounded-xl border px-3 py-2.5 text-sm transition-colors ${formState[field] ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
-    >
-      <span>{INTAKE_LABELS[field]}</span>
-      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${formState[field] ? "bg-emerald-200 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
-        {formState[field] ? "Yes" : "No"}
-      </span>
-    </button>
-  );
-
-  return (
-    <div className="space-y-5">
-      <h3 className="text-slate-800 font-bold">Patient Health Form (ML Schema)</h3>
-      <p className="text-slate-500 text-sm">Complete all required fields. This payload is validated before submission and used for AI risk prediction.</p>
-
-      <div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-sm space-y-4">
-        <div>
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">1) Demographics and Lifestyle</p>
-          <div className="grid grid-cols-2 gap-3">
-            {renderNumericField("age")}
-            <div>
-              <p className="text-xs text-slate-500 mb-1">{INTAKE_LABELS.sex}</p>
-              <select
-                value={formState.sex}
-                onChange={(event) => updateField("sex", event.target.value)}
-                className={`w-full border rounded-xl px-3 py-2.5 text-sm ${errors.sex ? "border-red-300 bg-red-50" : "border-slate-200"}`}
-              >
-                {SEX_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-              {errors.sex && <p className="text-[11px] text-red-600 mt-1">{errors.sex}</p>}
-            </div>
-            {renderNumericField("height_cm")}
-            {renderNumericField("weight_kg")}
-            <div className="col-span-2">
-              <p className="text-xs text-slate-500 mb-1">{INTAKE_LABELS.smoking_status}</p>
-              <select
-                value={formState.smoking_status}
-                onChange={(event) => updateField("smoking_status", event.target.value)}
-                className={`w-full border rounded-xl px-3 py-2.5 text-sm ${errors.smoking_status ? "border-red-300 bg-red-50" : "border-slate-200"}`}
-              >
-                {SMOKING_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-              {errors.smoking_status && <p className="text-[11px] text-red-600 mt-1">{errors.smoking_status}</p>}
-            </div>
-          </div>
-        </div>
-
-        <div>
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">2) Vital Signs</p>
-          <div className="grid grid-cols-2 gap-3">
-            {renderNumericField("spo2")}
-            {renderNumericField("heart_rate")}
-            {renderNumericField("respiratory_rate")}
-            {renderNumericField("temperature")}
-          </div>
-        </div>
-
-        <div>
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">3) Symptoms</p>
-          <div className="grid grid-cols-2 gap-3">
-            {["cough", "shortness_of_breath", "wheezing", "chest_pain", "fatigue"].map(renderBooleanField)}
-          </div>
-        </div>
-
-        <div>
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">4) Medical History</p>
-          <div className="grid grid-cols-2 gap-3">
-            {["asthma", "copd", "hypertension", "diabetes", "heart_disease"].map(renderBooleanField)}
-          </div>
-        </div>
-
-        <div>
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">5) Environment</p>
-          <div className="grid grid-cols-2 gap-3">
-            {renderNumericField("air_quality_index")}
-            {renderNumericField("environment_temperature")}
-            <div className="col-span-2">{renderNumericField("humidity")}</div>
-          </div>
-        </div>
-
-        {Object.keys(errors).length > 0 && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2">
-            <p className="text-xs font-semibold text-red-700 mb-1">Please fix the highlighted fields.</p>
-            <ul className="list-disc pl-4 text-[11px] text-red-700 space-y-0.5">
-              {Object.entries(errors).map(([field, message]) => (
-                <li key={field}>{INTAKE_LABELS[field] || field}: {message}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div className="flex justify-end">
-          <button
-            onClick={handleSave}
-            disabled={savingIntakeForm}
-            className={`px-4 py-2.5 rounded-xl text-sm font-semibold ${savingIntakeForm ? "bg-teal-300 text-white cursor-not-allowed" : "bg-teal-600 text-white hover:bg-teal-700"}`}
-          >
-            {savingIntakeForm ? "Saving..." : "Save Form"}
-          </button>
-        </div>
-
-        {formSent && !savingIntakeForm && (
-          <div className="flex justify-end">
-            <p className="text-xs font-semibold text-emerald-600">Form saved successfully.</p>
-          </div>
-        )}
-      </div>
-
-      <div className="bg-slate-900 rounded-2xl border border-slate-700 p-4 shadow-sm">
-        <p className="text-xs font-bold text-slate-300 uppercase tracking-wide mb-2">JSON Preview</p>
-        <pre className="text-[11px] leading-relaxed text-emerald-200 overflow-x-auto">
-          {JSON.stringify(previewPayload, null, 2)}
-        </pre>
-      </div>
-    </div>
-  );
-}
-
 /* ────────────────────────────────────────────────────────────
    AI CHAT SCREEN
 ──────────────────────────────────────────────────────────── */
@@ -720,6 +349,12 @@ function ChatScreen({ messages, onSendMessage, loadingChat }: {
 }) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const keyboardRows = [
+    ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
+    ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
+    ["z", "x", "c", "v", "b", "n", "m"],
+  ];
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -732,8 +367,27 @@ function ChatScreen({ messages, onSendMessage, loadingChat }: {
     await onSendMessage(prompt);
   };
 
+  const pressKeyboardKey = async (key: string) => {
+    if (key === "backspace") {
+      setInput((previous) => previous.slice(0, -1));
+      return;
+    }
+
+    if (key === "space") {
+      setInput((previous) => `${previous} `);
+      return;
+    }
+
+    if (key === "enter") {
+      await sendMessage();
+      return;
+    }
+
+    setInput((previous) => `${previous}${key}`);
+  };
+
   return (
-    <div className="flex flex-col bg-white rounded-2xl border border-slate-100 p-3" style={{ height: "520px" }}>
+    <div className="flex flex-col bg-white rounded-2xl border border-slate-100 p-3" style={{ height: "650px" }}>
       {/* Header */}
       <div className="flex items-center gap-3 pb-3 border-b border-slate-100 mb-3 flex-shrink-0">
         <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-violet-500 to-blue-600 flex items-center justify-center shadow-md shadow-violet-200">
@@ -749,7 +403,7 @@ function ChatScreen({ messages, onSendMessage, loadingChat }: {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto space-y-3 pr-1 bg-slate-50 rounded-xl p-3">
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1 bg-slate-50 rounded-xl p-3">
         {!messages.length && !loadingChat && (
           <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3">
             No messages yet. Start the conversation with your assistant.
@@ -815,6 +469,61 @@ function ChatScreen({ messages, onSendMessage, loadingChat }: {
           className="p-2.5 rounded-xl bg-teal-500 hover:bg-teal-600 transition-colors flex-shrink-0 shadow-md shadow-teal-200">
           <Send className="w-4 h-4 text-white" />
         </button>
+      </div>
+
+      {/* Phone-style keyboard */}
+      <div className="mt-2 flex-shrink-0 rounded-[1.7rem] bg-slate-200/90 border border-slate-300 px-2.5 pt-2.5 pb-3 shadow-inner">
+        <div className="space-y-1.5">
+          {keyboardRows.map((row, rowIndex) => (
+            <div
+              key={`keyboard-row-${rowIndex}`}
+              className={`flex justify-center gap-1 ${rowIndex === 1 ? "px-3" : rowIndex === 2 ? "px-8" : ""}`}
+            >
+              {row.map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => pressKeyboardKey(key)}
+                  className="h-9 min-w-[27px] flex-1 rounded-lg bg-white text-slate-800 text-sm font-semibold shadow-sm active:bg-slate-300 active:scale-95 transition-all"
+                >
+                  {key}
+                </button>
+              ))}
+            </div>
+          ))}
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setInput((previous) => previous.charAt(0).toUpperCase() + previous.slice(1))}
+              className="h-9 w-12 rounded-lg bg-slate-300 text-slate-700 text-xs font-bold shadow-sm active:bg-slate-400 transition-all"
+            >
+              shift
+            </button>
+            <button
+              type="button"
+              onClick={() => pressKeyboardKey("space")}
+              className="h-9 flex-1 rounded-lg bg-white text-slate-500 text-xs font-semibold shadow-sm active:bg-slate-300 transition-all"
+            >
+              space
+            </button>
+            <button
+              type="button"
+              onClick={() => pressKeyboardKey("backspace")}
+              className="h-9 w-12 rounded-lg bg-slate-300 text-slate-700 text-lg font-black shadow-sm active:bg-slate-400 transition-all"
+              aria-label="Backspace"
+            >
+              ⌫
+            </button>
+            <button
+              type="button"
+              onClick={() => pressKeyboardKey("enter")}
+              className="h-9 w-14 rounded-lg bg-teal-500 text-white text-xs font-bold shadow-sm active:bg-teal-600 transition-all"
+            >
+              send
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1069,8 +778,6 @@ export function PatientApp() {
   const [historyRowsState, setHistoryRowsState] = useState(historyData);
   const [doctorRiskHistoryState, setDoctorRiskHistoryState] = useState<any[]>([]);
   const [latestDoctorResultState, setLatestDoctorResultState] = useState<any>(null);
-  const [intakeFormState, setIntakeFormState] = useState<any>(null);
-  const [savingIntakeForm, setSavingIntakeForm] = useState(false);
   const [pendingMedicationIds, setPendingMedicationIds] = useState<string[]>([]);
   const [pendingNotificationIds, setPendingNotificationIds] = useState<string[]>([]);
   const [pendingSettingKeys, setPendingSettingKeys] = useState<string[]>([]);
@@ -1096,7 +803,7 @@ export function PatientApp() {
       try {
         setDataError("");
 
-        const [homePayload, spo2HistoryPayload, hrHistoryPayload, chatPayload, settingsPayload, profilePayload, notificationsPayload, doctorPayload, intakeFormPayload] = await Promise.all([
+        const [homePayload, spo2HistoryPayload, hrHistoryPayload, chatPayload, settingsPayload, profilePayload, notificationsPayload, doctorPayload] = await Promise.all([
           apiRequest<any>("/patient/me/home", { auth: true }),
           apiRequest<any>("/patient/me/history?metric=spo2&limit=30", { auth: true }),
           apiRequest<any>("/patient/me/history?metric=hr&limit=30", { auth: true }),
@@ -1105,10 +812,7 @@ export function PatientApp() {
           apiRequest<any>("/patient/me/profile", { auth: true }),
           apiRequest<any>("/patient/me/notifications?limit=20", { auth: true }),
           apiRequest<any>("/patient/me/doctor", { auth: true }),
-          apiRequest<any>("/patient/me/intake-form", { auth: true }),
         ]);
-
-        setIntakeFormState(intakeFormPayload?.form || null);
 
         if (homePayload?.home) {
           setHomeState(homePayload.home);
@@ -1503,40 +1207,11 @@ export function PatientApp() {
     }
   };
 
-  const handleSaveIntakeForm = async (formState: any) => {
-    if (savingIntakeForm) return false;
-    setSavingIntakeForm(true);
-    try {
-      const payload = await apiRequest<any>("/patient/me/intake-form", {
-        method: "PATCH",
-        auth: true,
-        body: formState,
-      });
-      setIntakeFormState(payload?.form || null);
-      return true;
-    } catch (error) {
-      let message = "Unable to save health form.";
-      if (error instanceof ApiError) {
-        message = error.message;
-        if (error.details && typeof error.details === "object" && !Array.isArray(error.details)) {
-          const firstDetail = Object.entries(error.details as Record<string, unknown>)[0];
-          if (firstDetail) {
-            message = `${message} ${String(firstDetail[0])}: ${String(firstDetail[1])}`;
-          }
-        }
-      }
-      setDataError(message);
-      return false;
-    } finally {
-      setSavingIntakeForm(false);
-    }
-  };
-
   const getScreen = () => {
     const latestDoctorResult = latestDoctorResultState || notifications.find((notification) => notification?.metadata?.type === "doctor-ai-results");
     switch (activeNav) {
       case "Home": return <HomeScreen homeData={homeState} meds={medicationsState} onToggleMedication={handleToggleMedication} pendingMedicationIds={pendingMedicationIds} latestDoctorResult={latestDoctorResult} />;
-      case "Health Form": return <HistoryScreen intakeForm={intakeFormState} onSaveIntakeForm={handleSaveIntakeForm} savingIntakeForm={savingIntakeForm} />;
+      case "Health Form": return <PatientDoctorAiData />;
       case "Doctor Chat": return <ChatScreen messages={chatMessages} onSendMessage={handleSendMessage} loadingChat={loadingChat} />;
       case "Profile":
         return (

@@ -1,10 +1,27 @@
 fastapi>=0.110
 uvicorn[standard]>=0.27
-numpy>=1.26
 pydantic>=2.0
 
-# Optional real model runtimes. Install them in a Python 3.11 environment when
-# you want actual TensorFlow/PyTorch inference instead of artifact-backed fallback.
-# tensorflow>=2.16
+numpy>=1.26,<2.0
+pandas>=2.2
+python-multipart>=0.0.9
+
+# Required for .keras models:
+# - cnn_bilstm_model.keras
+# - lstm_SPO2_model.keras
+tensorflow>=2.16
+
+# Optional: only if you want respiratory model_best.pth runtime inference.
 # torch>=2.2
 
+# Optional: only if you want WFDB .apn/.dat/.hea parsing.
+# wfdb>=4.1
+pypdf>=4.2.0
+scikit-learn>=1.4.0
+joblib>=1.3.0
+cryptography>=42.0.0
+
+# Optional controlled web search
+# Required only if you set RAG_ENABLE_WEB_SEARCH=1
+# and configure TAVILY_API_KEY in .env
+tavily-python>=0.5.0

@@ -1,0 +1,34 @@
+{
+  "documents": [
+    {
+      "name": "BTS_Oxygen_Guideline.pdf",
+      "size_bytes": 2676337
+    },
+    {
+      "name": "GINA_2025_Asthma.pdf",
+      "size_bytes": 2549903
+    },
+    {
+      "name": "GOLD_2025_COPD.pdf",
+      "size_bytes": 16712294
+    },
+    {
+      "name": "NEWS2_RCP.pdf",
+      "size_bytes": 2588875
+    },
+    {
+      "name": "NICE_Acutely_Ill_Adults.pdf",
+      "size_bytes": 111549
+    },
+    {
+      "name": "Surviving_Sepsis_2021.pdf",
+      "size_bytes": 6315256
+    },
+    {
+      "name": "WHO_Oxygen_Therapy.pdf",
+      "size_bytes": 2336114
+    }
+  ],
+  "chunks": 52712,
+  "warning": null
+}

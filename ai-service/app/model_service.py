@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 
 from .config import Settings
 from .guidelines import retrieve_guidelines
@@ -33,6 +34,176 @@ MODEL_KEY_ALIASES = {
 }
 
 FINAL_MODEL_ORDER = ["spo2", "apnea", "respiratory"]
+
+# ---------------------------------------------------------------------------
+# Model 2: LSTM SpO2 CSV inference configuration
+# IMPORTANT: this order must be the same as training after dropping
+# ["deterioration_next_12h", "patient_id"].
+# ---------------------------------------------------------------------------
+SPO2_LSTM_TARGET_COL = "deterioration_next_12h"
+SPO2_LSTM_GROUP_COL = "patient_id"
+SPO2_LSTM_FEATURES = [
+    "hour_from_admission",
+    "heart_rate",
+    "respiratory_rate",
+    "spo2_pct",
+    "systolic_bp",
+    "diastolic_bp",
+    "mobility_score",
+    "lactate",
+    "hemoglobin",
+    "age",
+    "gender",
+    "comorbidity_index",
+]
+
+SPO2_LSTM_COLUMN_ALIASES = {
+    "patient_id": "patient_id",
+    "patientid": "patient_id",
+    "patient": "patient_id",
+    "id_patient": "patient_id",
+    "hour_from_admission": "hour_from_admission",
+    "hours_from_admission": "hour_from_admission",
+    "hour_from_admission_auto": "hour_from_admission",
+    "age": "age",
+    "gender": "gender",
+    "sex": "gender",
+    "comorbidity_index": "comorbidity_index",
+    "comorbidity": "comorbidity_index",
+    "heart_rate": "heart_rate",
+    "heart_rate_bpm": "heart_rate",
+    "hr": "heart_rate",
+    "respiratory_rate": "respiratory_rate",
+    "respiratory_rate_br_min": "respiratory_rate",
+    "respiratory_rate_bpm": "respiratory_rate",
+    "rr": "respiratory_rate",
+    "spo2": "spo2_pct",
+    "spo2_pct": "spo2_pct",
+    "sp_o2": "spo2_pct",
+    "systolic_bp": "systolic_bp",
+    "systolic_bp_mmhg": "systolic_bp",
+    "diastolic_bp": "diastolic_bp",
+    "diastolic_bp_mmhg": "diastolic_bp",
+    "mobility_score": "mobility_score",
+    "lactate": "lactate",
+    "lactate_mmol_l": "lactate",
+    "hemoglobin": "hemoglobin",
+    "hemoglobin_g_dl": "hemoglobin",
+    "deterioration_next_12h": "deterioration_next_12h",
+}
+
+SPO2_LSTM_DEFAULTS = {
+    "hour_from_admission": 0.0,
+    "heart_rate": 80.0,
+    "respiratory_rate": 18.0,
+    "spo2_pct": 96.0,
+    "systolic_bp": 120.0,
+    "diastolic_bp": 80.0,
+    "mobility_score": 6.0,
+    "lactate": 1.2,
+    "hemoglobin": 13.5,
+    "age": 45.0,
+    "gender": 0.5,
+    "comorbidity_index": 0.0,
+}
+
+
+def normalize_spo2_column_name(column: str) -> str:
+    value = str(column).strip().lower()
+    value = value.replace("%", "")
+    value = value.replace("(", "")
+    value = value.replace(")", "")
+    value = value.replace("/", "_")
+    value = value.replace("-", "_")
+    value = value.replace(" ", "_")
+    while "__" in value:
+        value = value.replace("__", "_")
+    return value.strip("_")
+
+
+def standardize_spo2_columns(df: pd.DataFrame) -> pd.DataFrame:
+    rename_map = {}
+    for column in df.columns:
+        normalized = normalize_spo2_column_name(column)
+        rename_map[column] = SPO2_LSTM_COLUMN_ALIASES.get(normalized, normalized)
+    return df.rename(columns=rename_map)
+
+
+def encode_spo2_gender(value: Any) -> float:
+    if pd.isna(value):
+        return float("nan")
+
+    normalized = str(value).strip().upper()
+    if normalized in {"F", "FEMALE", "FEMME", "0"}:
+        return 0.0
+    if normalized in {"M", "MALE", "HOMME", "1"}:
+        return 1.0
+
+    try:
+        return float(str(value).replace(",", "."))
+    except ValueError:
+        return float("nan")
+
+
+def clean_spo2_lstm_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean an uploaded CSV so it matches the training dataframe.
+
+    Training used:
+      features = group.drop([target_col, "patient_id"], axis=1).values
+    Therefore the model expects exactly SPO2_LSTM_FEATURES in this order.
+    """
+    if df is None or df.empty:
+        raise ValueError("Le fichier CSV est vide.")
+
+    df = standardize_spo2_columns(df.copy())
+
+    if SPO2_LSTM_TARGET_COL in df.columns:
+        df = df.drop(columns=[SPO2_LSTM_TARGET_COL])
+
+    if SPO2_LSTM_GROUP_COL not in df.columns:
+        df[SPO2_LSTM_GROUP_COL] = "uploaded_patient"
+
+    if "hour_from_admission" not in df.columns:
+        df["hour_from_admission"] = np.arange(len(df), dtype=np.float32)
+
+    missing = [column for column in SPO2_LSTM_FEATURES if column not in df.columns]
+    if missing:
+        raise ValueError(f"Colonnes manquantes dans le CSV : {missing}")
+
+    df = df[[SPO2_LSTM_GROUP_COL] + SPO2_LSTM_FEATURES].copy()
+    df["gender"] = df["gender"].apply(encode_spo2_gender)
+
+    for column in SPO2_LSTM_FEATURES:
+        if column == "gender":
+            continue
+        df[column] = (
+            df[column]
+            .astype(str)
+            .str.replace(",", ".", regex=False)
+            .str.strip()
+        )
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    df = df.sort_values([SPO2_LSTM_GROUP_COL, "hour_from_admission"])
+
+    # Fill missing values inside each patient's timeline first.
+    df[SPO2_LSTM_FEATURES] = df.groupby(SPO2_LSTM_GROUP_COL)[SPO2_LSTM_FEATURES].transform(
+        lambda series: series.ffill().bfill()
+    )
+
+    # Remaining missing values are filled by dataset medians, then safe defaults.
+    medians = df[SPO2_LSTM_FEATURES].median(numeric_only=True)
+    for column in SPO2_LSTM_FEATURES:
+        median_value = medians.get(column, np.nan)
+        default_value = SPO2_LSTM_DEFAULTS[column]
+        fill_value = default_value if pd.isna(median_value) else float(median_value)
+        df[column] = df[column].fillna(fill_value)
+
+    if df[SPO2_LSTM_FEATURES].isna().any().any():
+        bad_columns = df[SPO2_LSTM_FEATURES].columns[df[SPO2_LSTM_FEATURES].isna().any()].tolist()
+        raise ValueError(f"Valeurs manquantes impossibles à corriger : {bad_columns}")
+
+    return df
 
 
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -156,17 +327,49 @@ class ModelManager:
         }
         self._torch = None
         self._respiratory_labels: Dict[str, int] = {}
+        self.adaptive_rag = None
+        self.adaptive_rag_error: Optional[str] = None
+        try:
+            from .adaptive_rag import AdaptiveRAGEngine
+            self.adaptive_rag = AdaptiveRAGEngine()
+        except Exception as exc:
+            # The AI models must continue working even if the RAG index is not ready yet.
+            self.adaptive_rag_error = str(exc)
 
     def load_all(self) -> None:
         for runtime_model in self.models.values():
             self._load_model(runtime_model)
 
+    def rebuild_adaptive_rag(self) -> Dict[str, Any]:
+        if self.adaptive_rag is None:
+            try:
+                from .adaptive_rag import AdaptiveRAGEngine
+                self.adaptive_rag = AdaptiveRAGEngine()
+                self.adaptive_rag_error = None
+            except Exception as exc:
+                self.adaptive_rag_error = str(exc)
+                raise RuntimeError(f"Adaptive RAG unavailable: {exc}") from exc
+
+        try:
+            return self.adaptive_rag.rebuild_index()
+        except Exception as exc:
+            self.adaptive_rag_error = str(exc)
+            raise RuntimeError(f"Adaptive RAG index rebuild failed: {exc}") from exc
+
     def health(self) -> Dict[str, Any]:
+        rag_status = {"available": False, "error": self.adaptive_rag_error}
+        if self.adaptive_rag is not None:
+            try:
+                rag_status = self.adaptive_rag.status()
+            except Exception as exc:
+                rag_status = {"available": False, "error": str(exc)}
+
         return {
             "status": "ok",
             "service": "ehealth-ai-service",
             "models_dir": str(self.settings.models_dir),
             "models": {key: model.status() for key, model in self.models.items()},
+            "adaptive_rag": rag_status,
         }
 
     def _load_model(self, runtime_model: RuntimeModel) -> None:
@@ -327,6 +530,27 @@ class ModelManager:
             limit=int(payload.get("top_k_guidelines") or 4),
         )
         factors = self._factors(signals, results, fused_score)
+        rag_payload = self._build_model_specific_rag_payload(
+            selected=selected,
+            signals=signals,
+            results=results,
+            fused_score=fused_score,
+        )
+        adaptive_context = self._adaptive_rag_explain(
+            patient_id=str(payload.get("patient_id") or signals.get("patient_id") or "unknown"),
+            risk_score=fused_score,
+            confidence=confidence,
+            model_name=rag_payload["model_name"],
+            signals=None,
+            last_vitals=rag_payload["last_vitals"],
+            factors=rag_payload["factors"],
+            selected_models=rag_payload["selected_models"],
+            top_k=int(payload.get("top_k_guidelines") or 4),
+            question=rag_payload["question"],
+        )
+        if adaptive_context and adaptive_context.get("sources"):
+            sources = adaptive_context["sources"]
+        adaptive_explanation = (adaptive_context or {}).get("explanation")
 
         model_payload = dict(results)
         if "spo2" in results:
@@ -351,8 +575,9 @@ class ModelManager:
                 "selected_models": selected,
                 "strategy": "weighted_final_model_fusion",
             },
-            "explanation": self._explanation(signals, results, fused_score, sources),
+            "explanation": adaptive_explanation or self._explanation(signals, results, fused_score, sources),
             "sources": sources,
+            "rag": adaptive_context or {"mode": "static_guidelines", "sources": sources},
         }
 
     def predict_manual(self, request_payload: Dict[str, Any], files: Any) -> Dict[str, Any]:
@@ -361,6 +586,386 @@ class ModelManager:
         payload["model"] = request_payload.get("model") or payload.get("model") or "all_models"
         payload["top_k_guidelines"] = request_payload.get("top_k_guidelines") or payload.get("top_k_guidelines") or 4
         return self.predict(payload, files=files_dict)
+
+    def predict_spo2_lstm_csv(self, df: pd.DataFrame, top_k_guidelines: int = 4) -> Dict[str, Any]:
+        """Run Model 2 on an uploaded patient-history CSV.
+
+        This method does not change Model 1 / CNN-BiLSTM apnea inference.
+        It only uses the existing RuntimeModel with key="spo2".
+        """
+        runtime = self.models["spo2"]
+
+        if not runtime.artifact_present:
+            raise RuntimeError(f"Modèle SpO2 introuvable : {runtime.path}")
+        if not runtime.loaded_runtime or runtime.model is None:
+            raise RuntimeError(
+                "Le modèle LSTM SpO2 n'est pas chargé. "
+                f"Détail : {runtime.load_error or 'runtime indisponible'}"
+            )
+
+        cleaned_df = clean_spo2_lstm_dataframe(df)
+
+        try:
+            from tensorflow.keras.preprocessing.sequence import pad_sequences  # type: ignore
+        except Exception:
+            from keras.preprocessing.sequence import pad_sequences  # type: ignore
+
+        input_shape = runtime.model.input_shape
+        if isinstance(input_shape, list):
+            input_shape = input_shape[0]
+
+        if len(input_shape) < 3:
+            raise RuntimeError(f"Input shape LSTM invalide : {input_shape}")
+
+        max_len = input_shape[1]
+        if max_len is None:
+            max_len = int(cleaned_df.groupby(SPO2_LSTM_GROUP_COL).size().max())
+        else:
+            max_len = int(max_len)
+
+        expected_features = int(input_shape[2])
+        if expected_features != len(SPO2_LSTM_FEATURES):
+            raise RuntimeError(
+                f"Le modèle attend {expected_features} features, "
+                f"mais le code fournit {len(SPO2_LSTM_FEATURES)} features : {SPO2_LSTM_FEATURES}"
+            )
+
+        x_sequences = []
+        patient_ids = []
+        row_counts = []
+        last_hours = []
+        last_vitals = []
+
+        for patient_id, group in cleaned_df.groupby(SPO2_LSTM_GROUP_COL, sort=False):
+            group = group.sort_values("hour_from_admission")
+            values = group[SPO2_LSTM_FEATURES].to_numpy(dtype=np.float32)
+            x_sequences.append(values)
+            patient_ids.append(str(patient_id))
+            row_counts.append(int(len(group)))
+            last_hours.append(float(group["hour_from_admission"].iloc[-1]))
+            last_vitals.append(
+                {
+                    "hour_from_admission": float(group["hour_from_admission"].iloc[-1]),
+                    "heart_rate": float(group["heart_rate"].iloc[-1]),
+                    "respiratory_rate": float(group["respiratory_rate"].iloc[-1]),
+                    "spo2_pct": float(group["spo2_pct"].iloc[-1]),
+                    "spo2": float(group["spo2_pct"].iloc[-1]),
+                    "systolic_bp": float(group["systolic_bp"].iloc[-1]),
+                    "diastolic_bp": float(group["diastolic_bp"].iloc[-1]),
+                    "mobility_score": float(group["mobility_score"].iloc[-1]),
+                    "lactate": float(group["lactate"].iloc[-1]),
+                    "hemoglobin": float(group["hemoglobin"].iloc[-1]),
+                    "age": float(group["age"].iloc[-1]),
+                    "gender": float(group["gender"].iloc[-1]),
+                    "comorbidity_index": float(group["comorbidity_index"].iloc[-1]),
+                }
+            )
+
+        x_padded = pad_sequences(
+            x_sequences,
+            maxlen=max_len,
+            dtype="float32",
+            padding="pre",
+            truncating="pre",
+            value=0.0,
+        )
+
+        predictions = np.asarray(runtime.model.predict(x_padded, verbose=0))
+
+        results = []
+        probabilities = []
+        for index, patient_id in enumerate(patient_ids):
+            if predictions.ndim >= 3:
+                probability = float(predictions[index, -1, 0])
+            elif predictions.ndim == 2:
+                probability = float(predictions[index, -1])
+            else:
+                probability = float(np.ravel(predictions)[index])
+
+            probability = clamp(probability)
+            probabilities.append(probability)
+            prediction = int(probability >= 0.5)
+
+            results.append(
+                {
+                    "patient_id": patient_id,
+                    "rows_used": row_counts[index],
+                    "last_hour_from_admission": last_hours[index],
+                    "probability_deterioration": round(probability, 4),
+                    "prediction": prediction,
+                    "risk_label": risk_label(probability),
+                    "status": "Risque de détérioration" if prediction == 1 else "Pas de détérioration détectée",
+                    "last_vitals": last_vitals[index],
+                }
+            )
+
+        overall_score = max(probabilities) if probabilities else 0.0
+        selected_patient = results[0]["patient_id"] if len(results) == 1 else "multiple"
+        sources = retrieve_guidelines(
+            query="spo2 deterioration respiratory rate patient monitoring",
+            selected_models=["spo2"],
+            limit=max(0, int(top_k_guidelines or 0)),
+        )
+
+        model_result = self._model_result(
+            runtime,
+            overall_score,
+            0.90 if runtime.loaded_runtime else 0.80,
+            f"LSTM SpO2 CSV inference on {len(results)} patient sequence(s).",
+            {
+                "task": "deterioration_next_12h",
+                "threshold": 0.5,
+                "sequence_length_expected_by_model": max_len,
+                "features_used": SPO2_LSTM_FEATURES,
+                "patients_analyzed": len(results),
+                "results": results,
+            },
+        )
+
+        csv_factors = [
+            {
+                "key": "spo2_lstm_csv",
+                "label": "LSTM SpO2 deterioration",
+                "value": f"{percent(overall_score)}% highest predicted deterioration risk",
+                "severity": risk_label(overall_score),
+            }
+        ]
+        last_vitals_for_rag = results[0].get("last_vitals", {}) if results else {}
+        adaptive_context = self._adaptive_rag_explain(
+            patient_id=selected_patient,
+            risk_score=overall_score,
+            confidence=float(model_result["confidence"]),
+            model_name="lstm_SPO2_model.keras",
+            signals=None,
+            last_vitals=last_vitals_for_rag,
+            factors=csv_factors,
+            selected_models=["spo2"],
+            top_k=top_k_guidelines,
+            question=(
+                "Explain Model 2 LSTM SpO2 deterioration risk using only the uploaded CSV features: "
+                "hour_from_admission, heart_rate, respiratory_rate, spo2_pct, blood pressure, mobility, "
+                "lactate, hemoglobin, age, gender and comorbidity_index."
+            ),
+        )
+        if adaptive_context and adaptive_context.get("sources"):
+            sources = adaptive_context["sources"]
+        adaptive_explanation = (adaptive_context or {}).get("explanation")
+
+        return {
+            "patient_id": selected_patient,
+            "risk_score": round(overall_score, 4),
+            "risk_label": risk_label(overall_score),
+            "confidence": model_result["confidence"],
+            "predicted_window_hours": self._prediction_window_hours(overall_score),
+            "factors": csv_factors,
+            "models": {
+                "spo2": model_result,
+                "vitals": model_result,
+            },
+            "fusion": {
+                "risk_score": round(overall_score, 4),
+                "risk_level": risk_label(overall_score),
+                "selected_models": ["spo2"],
+                "strategy": "single_model_spo2_lstm_csv",
+            },
+            "explanation": adaptive_explanation or (
+                f"Model 2 LSTM SpO2 analysed {len(results)} patient sequence(s) from the CSV. "
+                f"The highest predicted probability of deterioration in the next 12 hours is {percent(overall_score)}%. "
+                "The decision threshold is 50%."
+            ),
+            "sources": sources,
+            "rag": adaptive_context or {"mode": "static_guidelines", "sources": sources},
+            "results": results,
+            "csv_cleaning": {
+                "rows_after_cleaning": int(len(cleaned_df)),
+                "patients_detected": int(cleaned_df[SPO2_LSTM_GROUP_COL].nunique()),
+                "target_column_removed_if_present": SPO2_LSTM_TARGET_COL,
+            },
+        }
+
+
+    def _build_model_specific_rag_payload(
+        self,
+        selected: List[str],
+        signals: Dict[str, Any],
+        results: Dict[str, Dict[str, Any]],
+        fused_score: float,
+    ) -> Dict[str, Any]:
+        """Return a model-specific RAG payload.
+
+        This prevents the RAG summary from mixing Model 1 apnea logic with
+        Model 2 SpO2 tabular logic. The RAG receives only the data and factors
+        that belong to the selected model.
+        """
+        selected_set = set(selected or [])
+
+        if selected_set == {"apnea"} and "apnea" in results:
+            apnea_result = results["apnea"]
+            evaluation = apnea_result.get("evaluation") or {}
+            apnea_score = float(apnea_result.get("risk_score", fused_score) or fused_score)
+
+            apnea_data = {
+                "apnea_probability": round(apnea_score * 100, 2),
+                "apnea_label": apnea_result.get("apnea_label") or ("apnea" if apnea_score >= 0.5 else "no_apnea"),
+                "windows_analyzed": apnea_result.get("windows_analyzed"),
+                "signal_samples": apnea_result.get("signal_samples"),
+                "apnea_level": apnea_result.get("apnea_level"),
+                "accuracy": evaluation.get("accuracy"),
+                "true_apnea_rate": evaluation.get("true_apnea_rate"),
+                "predicted_apnea_rate": evaluation.get("predicted_apnea_rate"),
+                "total_windows": evaluation.get("total_windows"),
+            }
+            apnea_data = {key: value for key, value in apnea_data.items() if value is not None}
+
+            apnea_factors = [
+                {
+                    "key": "cnn_bilstm_apnea",
+                    "label": "CNN-BiLSTM Apnea Signal",
+                    "value": f"{percent(apnea_score)}% apnea-related model output",
+                    "severity": risk_label(apnea_score),
+                }
+            ]
+            if apnea_result.get("windows_analyzed") is not None:
+                apnea_factors.append(
+                    {
+                        "key": "windows_analyzed",
+                        "label": "Signal windows analyzed",
+                        "value": str(apnea_result.get("windows_analyzed")),
+                        "severity": risk_label(apnea_score),
+                    }
+                )
+
+            return {
+                "model_name": "cnn_bilstm_model.keras",
+                "selected_models": ["apnea"],
+                "last_vitals": apnea_data,
+                "factors": apnea_factors,
+                "question": (
+                    "Explain Model 1 CNN-BiLSTM apnea signal risk using only apnea/sleep-breathing "
+                    "signal interpretation, uploaded .apn/.dat/.hea information, apnea windows, and respiratory monitoring context. "
+                    "Do not use SpO2 deterioration, lactate, blood pressure, or sepsis interpretation."
+                ),
+            }
+
+        if selected_set == {"spo2"} and "spo2" in results:
+            return {
+                "model_name": "lstm_SPO2_model.keras",
+                "selected_models": ["spo2"],
+                "last_vitals": {
+                    "spo2": signals.get("spo2"),
+                    "heart_rate": signals.get("heart_rate"),
+                    "respiratory_rate": signals.get("respiratory_rate"),
+                    "systolic_bp": signals.get("systolic_bp"),
+                    "diastolic_bp": signals.get("diastolic_bp"),
+                    "mobility_score": signals.get("mobility_score"),
+                    "lactate": signals.get("lactate"),
+                    "hemoglobin": signals.get("hemoglobin"),
+                    "age": signals.get("age"),
+                    "comorbidity_index": signals.get("comorbidity_index"),
+                },
+                "factors": [
+                    {
+                        "key": "spo2_lstm",
+                        "label": "LSTM SpO2 deterioration",
+                        "value": f"{percent(float(results['spo2'].get('risk_score', fused_score)))}% model contribution",
+                        "severity": risk_label(float(results["spo2"].get("risk_score", fused_score))),
+                    }
+                ],
+                "question": (
+                    "Explain Model 2 LSTM SpO2 deterioration risk using only SpO2/tabular time-series features, "
+                    "including oxygen saturation, respiratory rate, heart rate, blood pressure, mobility, lactate, hemoglobin, age and comorbidity."
+                ),
+            }
+
+        if selected_set == {"respiratory"} and "respiratory" in results:
+            respiratory_result = results["respiratory"]
+            return {
+                "model_name": "model_best.pth",
+                "selected_models": ["respiratory"],
+                "last_vitals": {
+                    "predicted_class": respiratory_result.get("predicted_class"),
+                    "wheezing": respiratory_result.get("wheezing"),
+                    "cough_frequency_per_hour": respiratory_result.get("cough_frequency_per_hour"),
+                    "symptom_count": respiratory_result.get("symptom_count"),
+                },
+                "factors": [
+                    {
+                        "key": "respiratory_audio",
+                        "label": "Respiratory audio model",
+                        "value": f"{percent(float(respiratory_result.get('risk_score', fused_score)))}% model contribution",
+                        "severity": risk_label(float(respiratory_result.get("risk_score", fused_score))),
+                    }
+                ],
+                "question": "Explain respiratory audio model output using only respiratory sound, wheeze, cough and symptom context.",
+            }
+
+        # Combined or fallback case: keep broader clinical context.
+        return {
+            "model_name": ", ".join(selected or ["all_models"]),
+            "selected_models": selected,
+            "last_vitals": {
+                "spo2": signals.get("spo2"),
+                "heart_rate": signals.get("heart_rate"),
+                "respiratory_rate": signals.get("respiratory_rate"),
+                "systolic_bp": signals.get("systolic_bp"),
+                "diastolic_bp": signals.get("diastolic_bp"),
+                "lactate": signals.get("lactate"),
+                "hemoglobin": signals.get("hemoglobin"),
+            },
+            "factors": self._factors(signals, results, fused_score),
+            "question": None,
+        }
+
+    def _adaptive_rag_explain(
+        self,
+        patient_id: str,
+        risk_score: float,
+        confidence: float,
+        model_name: str,
+        signals: Optional[Dict[str, Any]] = None,
+        last_vitals: Optional[Dict[str, Any]] = None,
+        factors: Optional[List[Dict[str, Any]]] = None,
+        selected_models: Optional[List[str]] = None,
+        top_k: int = 4,
+        question: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if self.adaptive_rag is None:
+            return None
+
+        try:
+            selected_models = selected_models or []
+            selected_set = set(selected_models)
+            combined_vitals = dict(last_vitals or {})
+
+            # Add generic signal values only for combined mode. For single-model
+            # RAG we deliberately keep the input model-specific.
+            if signals and not (selected_set == {"apnea"} or selected_set == {"spo2"} or selected_set == {"respiratory"}):
+                for key in [
+                    "spo2",
+                    "heart_rate",
+                    "respiratory_rate",
+                    "systolic_bp",
+                    "diastolic_bp",
+                    "lactate",
+                    "hemoglobin",
+                ]:
+                    if key not in combined_vitals and key in signals:
+                        combined_vitals[key] = signals[key]
+
+            return self.adaptive_rag.explain_prediction(
+                patient_id=patient_id,
+                risk_score=float(risk_score),
+                confidence=float(confidence),
+                model_name=model_name,
+                last_vitals={key: value for key, value in combined_vitals.items() if value is not None},
+                factors=factors or [],
+                selected_models=selected_models,
+                top_k=max(0, int(top_k or 0)),
+                question=question,
+            )
+        except Exception as exc:
+            self.adaptive_rag_error = str(exc)
+            return None
 
     def _extract_signals(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         intake = payload.get("intake_form") or {}
@@ -739,30 +1344,50 @@ class ModelManager:
         }
 
     def _spo2_tensor(self, signals: Dict[str, Any], payload: Dict[str, Any]) -> np.ndarray:
+        """Fallback/manual tensor for Model 2 when no CSV is uploaded.
+
+        The real CSV endpoint uses predict_spo2_lstm_csv(). This method is kept for
+        compatibility with /api/v1/predict and uses the same feature order as training.
+        """
+        runtime = self.models.get("spo2")
+        max_len = 72
+        if runtime is not None and runtime.loaded_runtime and runtime.model is not None:
+            input_shape = runtime.model.input_shape
+            if isinstance(input_shape, list):
+                input_shape = input_shape[0]
+            if len(input_shape) >= 2 and input_shape[1] is not None:
+                max_len = int(input_shape[1])
+
         intake = payload.get("intake_form") or {}
-        gender = str(intake.get("gender") or intake.get("sex") or signals.get("sex") or "other").lower()
-        gender_value = {"female": 0.0, "male": 1.0}.get(gender, 0.5)
+        raw_gender = str(intake.get("gender") or intake.get("sex") or signals.get("sex") or "").strip().upper()
+        if raw_gender in {"F", "FEMALE", "FEMME"}:
+            gender_value = 0.0
+        elif raw_gender in {"M", "MALE", "HOMME"}:
+            gender_value = 1.0
+        else:
+            gender_value = 0.5
+
+        hour = to_number(intake.get("hour_from_admission"), payload.get("hour_from_admission"), default=0)
         base = np.array(
             [
-                clamp(to_number(intake.get("hour_from_admission"), default=0) / 168),
-                clamp(signals["heart_rate"] / 220),
-                clamp(signals["respiratory_rate"] / 80),
-                clamp(signals["spo2"] / 100),
-                clamp(signals["systolic_bp"] / 260),
-                clamp(signals["diastolic_bp"] / 150),
-                clamp(signals["mobility_score"] / 10),
-                clamp(signals["lactate"] / 30),
-                clamp(signals["hemoglobin"] / 22),
-                clamp(signals["age"] / 120),
+                hour,
+                signals["heart_rate"],
+                signals["respiratory_rate"],
+                signals["spo2"],
+                signals["systolic_bp"],
+                signals["diastolic_bp"],
+                signals["mobility_score"],
+                signals["lactate"],
+                signals["hemoglobin"],
+                signals["age"],
                 gender_value,
-                clamp(signals["comorbidity_index"] / 40),
+                signals["comorbidity_index"],
             ],
             dtype=np.float32,
         )
-        series = np.tile(base, (72, 1))
-        trend = np.linspace(-0.04, 0.04, 72, dtype=np.float32)
-        series[:, 3] = clamp(signals["spo2"] / 100) + trend * clamp((94 - signals["spo2"]) / 18)
-        series[:, 2] = clamp(signals["respiratory_rate"] / 80) + trend * clamp((signals["respiratory_rate"] - 18) / 24)
+
+        series = np.tile(base, (max_len, 1)).astype(np.float32)
+        series[:, 0] = np.maximum(0, hour - (max_len - 1)) + np.arange(max_len, dtype=np.float32)
         return np.expand_dims(series, axis=0).astype(np.float32)
 
     def _apnea_tensor(self, signals: Dict[str, Any], files: Dict[str, Any]) -> np.ndarray:

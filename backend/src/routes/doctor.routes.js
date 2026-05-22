@@ -19,10 +19,9 @@ import { ChatMessage } from "../models/ChatMessage.js";
 import { resolvePatientByIdentifier } from "../services/patientResolver.js";
 import { ensurePatientClinicalData } from "../services/patientDataBootstrap.js";
 import { buildCompositeAiInsight, buildManualAiInsights, generateExplainableInsight } from "../services/aiEngine.js";
-import { fetchGuidelinesFromAiService, runManualAiFromAiService } from "../services/aiGateway.js";
+import { fetchGuidelinesFromAiService, runManualAiFromAiService, runSpo2CsvFromAiService } from "../services/aiGateway.js";
 import { generatePatientCode } from "../services/identity.js";
 import { getDefaultPatientFormData, validatePatientFormPayload } from "../services/patientFormSchema.js";
-import { mapSpo2PayloadToIntakeForm, validateSpo2Payload } from "../services/manualAiSchema.js";
 
 export const doctorRouter = express.Router();
 
@@ -83,14 +82,13 @@ const sanitizeFileName = (value) =>
 const MANUAL_MODEL_KEYS = {
   apnea: "cnn_bilstm_model.keras",
   spo2: "lstm_SPO2_model.keras",
-  audio: "model_best.pth",
   all: "all_models",
 };
 
 const manualUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 25 * 1024 * 1024,
+    fileSize: 75 * 1024 * 1024,
     files: 16,
   },
 });
@@ -102,7 +100,7 @@ const manualUploadMiddleware = (req, _res, next) => {
     { name: "apn_file", maxCount: 1 },
     { name: "dat_file", maxCount: 1 },
     { name: "hea_file", maxCount: 1 },
-    { name: "wav_files", maxCount: 12 },
+    { name: "csv_file", maxCount: 1 },
   ])(req, _res, (error) => {
     if (error) {
       return next(new HttpError(400, error.message));
@@ -117,26 +115,197 @@ const getUploadedFile = (req, field) => {
   return files[0];
 };
 
-const getUploadedFiles = (req, field) => {
-  const files = req.files?.[field];
-  return Array.isArray(files) ? files : [];
-};
+
 
 const fileHasExtension = (file, extension) =>
   Boolean(file?.originalname && String(file.originalname).toLowerCase().endsWith(extension));
 
-const parseSpo2Payload = (rawPayload) => {
-  if (!rawPayload) return { payload: null, error: "Missing SPO2 payload." };
-  if (typeof rawPayload === "object") return { payload: rawPayload, error: null };
-  if (typeof rawPayload === "string") {
-    try {
-      const parsed = JSON.parse(rawPayload);
-      return { payload: parsed, error: null };
-    } catch (error) {
-      return { payload: null, error: "Invalid spo2_payload JSON." };
+const fileSummary = (file) => {
+  if (!file) return null;
+  return {
+    name: file.originalname || "file",
+    mimetype: file.mimetype || "application/octet-stream",
+    sizeBytes: Number(file.size || file.buffer?.length || 0),
+  };
+};
+
+const buildDoctorAiInputSnapshot = ({
+  profile,
+  modelKey,
+  manualInput,
+  uploadedFilesForAi,
+  latestVitalPayload,
+  latestEnvironmentPayload,
+}) => ({
+  patientId: profile.patientCode,
+  model: modelKey || MANUAL_MODEL_KEYS.all,
+  usedAt: new Date().toISOString(),
+  input: manualInput || {},
+  vitalsUsed: latestVitalPayload || {},
+  environmentUsed: latestEnvironmentPayload || {},
+  filesUsed: {
+    apn: fileSummary(uploadedFilesForAi?.apnFile),
+    dat: fileSummary(uploadedFilesForAi?.datFile),
+    hea: fileSummary(uploadedFilesForAi?.heaFile),
+    csv: fileSummary(uploadedFilesForAi?.csvFile),
+    wav: Array.isArray(uploadedFilesForAi?.wavFiles)
+      ? uploadedFilesForAi.wavFiles.map((file) => fileSummary(file)).filter(Boolean)
+      : [],
+  },
+});
+
+const normalizeCsvColumnName = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/﻿/g, "")
+    .replace(/%/g, "")
+    .replace(/[()]/g, "")
+    .replace(/[\/\-\s]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+
+const SPO2_CSV_ALIASES = {
+  patient_id: "patient_id",
+  patientid: "patient_id",
+  patient: "patient_id",
+  hour_from_admission: "hour_from_admission",
+  hours_from_admission: "hour_from_admission",
+  age: "age",
+  gender: "gender",
+  sex: "gender",
+  comorbidity_index: "comorbidity_index",
+  heart_rate: "heart_rate",
+  heart_rate_bpm: "heart_rate",
+  respiratory_rate: "respiratory_rate",
+  respiratory_rate_br_min: "respiratory_rate",
+  spo2: "spo2",
+  spo2_pct: "spo2",
+  sp_o2: "spo2",
+  systolic_bp: "systolic_bp",
+  systolic_bp_mmhg: "systolic_bp",
+  diastolic_bp: "diastolic_bp",
+  diastolic_bp_mmhg: "diastolic_bp",
+  mobility_score: "mobility_score",
+  lactate: "lactate",
+  lactate_mmol_l: "lactate",
+  hemoglobin: "hemoglobin",
+  hemoglobin_g_dl: "hemoglobin",
+};
+
+const splitCsvLine = (line, delimiter) => {
+  const values = [];
+  let current = "";
+  let insideQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const nextChar = line[index + 1];
+
+    if (char === '"' && insideQuotes && nextChar === '"') {
+      current += '"';
+      index += 1;
+    } else if (char === '"') {
+      insideQuotes = !insideQuotes;
+    } else if (char === delimiter && !insideQuotes) {
+      values.push(current.trim());
+      current = "";
+    } else {
+      current += char;
     }
   }
-  return { payload: null, error: "Invalid SPO2 payload." };
+
+  values.push(current.trim());
+  return values;
+};
+
+const detectCsvDelimiter = (headerLine) => {
+  const candidates = [",", ";", "\t"];
+  return candidates
+    .map((delimiter) => ({ delimiter, count: splitCsvLine(headerLine, delimiter).length }))
+    .sort((a, b) => b.count - a.count)[0]?.delimiter || ",";
+};
+
+const csvNumber = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(String(value).trim().replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const csvGenderToSex = (value, fallback = "other") => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["m", "male", "homme", "1"].includes(normalized)) return "male";
+  if (["f", "female", "femme", "0"].includes(normalized)) return "female";
+  return fallback || "other";
+};
+
+const buildManualInputFromSpo2Csv = (csvFile, fallback = {}) => {
+  const manualInput = {
+    ...fallback,
+    spo2_csv_file: csvFile?.originalname || "spo2_history.csv",
+  };
+
+  try {
+    const text = csvFile.buffer.toString("utf8").replace(/^﻿/, "");
+    const lines = text.split(/\r?\n/).filter((line) => line.trim());
+    if (lines.length < 2) return manualInput;
+
+    const delimiter = detectCsvDelimiter(lines[0]);
+    const headers = splitCsvLine(lines[0], delimiter).map((header) => {
+      const normalized = normalizeCsvColumnName(header);
+      return SPO2_CSV_ALIASES[normalized] || normalized;
+    });
+
+    let lastRow = null;
+    for (let index = lines.length - 1; index >= 1; index -= 1) {
+      const values = splitCsvLine(lines[index], delimiter);
+      if (values.length > 1) {
+        lastRow = {};
+        headers.forEach((header, columnIndex) => {
+          lastRow[header] = values[columnIndex];
+        });
+        break;
+      }
+    }
+
+    if (!lastRow) return manualInput;
+
+    const numericFields = [
+      "hour_from_admission",
+      "age",
+      "comorbidity_index",
+      "heart_rate",
+      "respiratory_rate",
+      "spo2",
+      "systolic_bp",
+      "diastolic_bp",
+      "mobility_score",
+      "lactate",
+      "hemoglobin",
+    ];
+
+    numericFields.forEach((field) => {
+      const value = csvNumber(lastRow[field]);
+      if (value !== null) {
+        if (field === "spo2") {
+          manualInput.spo2 = value;
+          manualInput.spo2_pct = value;
+        } else {
+          manualInput[field] = value;
+        }
+      }
+    });
+
+    if (lastRow.patient_id) manualInput.patient_id = String(lastRow.patient_id).trim();
+    if (lastRow.gender) {
+      manualInput.sex = csvGenderToSex(lastRow.gender, manualInput.sex);
+      manualInput.gender = manualInput.sex;
+    }
+  } catch {
+    return manualInput;
+  }
+
+  return manualInput;
 };
 
 const buildFallbackManualInput = ({ profile, latestVital, latestEnvironment }) => {
@@ -730,11 +899,18 @@ doctorRouter.post(
       const fallbackManualInput = buildFallbackManualInput({ profile, latestVital, latestEnvironment });
 
       if (modelKey === MANUAL_MODEL_KEYS.spo2) {
-        const validation = validateSpo2Payload(req.body || {}, { requireAll: true });
-        if (!validation.isValid) {
-          throw new HttpError(400, "Invalid LSTM SpO2 payload.", validation.errors);
+        const csvFile = getUploadedFile(req, "csv_file");
+        const errors = {};
+
+        if (!csvFile) errors.csv_file = "Missing .csv file.";
+        else if (!fileHasExtension(csvFile, ".csv")) errors.csv_file = "Expected .csv file.";
+
+        if (Object.keys(errors).length > 0) {
+          throw new HttpError(400, "Invalid LSTM SpO2 CSV file.", errors);
         }
-        manualInput = mapSpo2PayloadToIntakeForm(validation.data, fallbackManualInput);
+
+        manualInput = buildManualInputFromSpo2Csv(csvFile, fallbackManualInput);
+        uploadedFilesForAi = { csvFile, wavFiles: [] };
       } else if (modelKey === MANUAL_MODEL_KEYS.apnea) {
         const apnFile = getUploadedFile(req, "apn_file");
         const datFile = getUploadedFile(req, "dat_file");
@@ -763,30 +939,11 @@ doctorRouter.post(
           },
         };
         uploadedFilesForAi = { apnFile, datFile, heaFile, wavFiles: [] };
-      } else if (modelKey === MANUAL_MODEL_KEYS.audio) {
-        const wavFiles = getUploadedFiles(req, "wav_files");
-        const errors = {};
-
-        if (!wavFiles.length) {
-          errors.wav_files = "At least one .wav file is required.";
-        } else if (wavFiles.some((file) => !fileHasExtension(file, ".wav"))) {
-          errors.wav_files = "All files must be .wav.";
-        }
-
-        if (Object.keys(errors).length > 0) {
-          throw new HttpError(400, "Invalid audio model files.", errors);
-        }
-
-        manualInput = {
-          ...fallbackManualInput,
-          wav_files: wavFiles.map((file) => file.originalname),
-        };
-        uploadedFilesForAi = { wavFiles };
       } else if (modelKey === MANUAL_MODEL_KEYS.all) {
         const apnFile = getUploadedFile(req, "apn_file");
         const datFile = getUploadedFile(req, "dat_file");
         const heaFile = getUploadedFile(req, "hea_file");
-        const wavFiles = getUploadedFiles(req, "wav_files");
+        const csvFile = getUploadedFile(req, "csv_file");
         const errors = {};
 
         if (!apnFile) errors.apn_file = "Missing .apn file.";
@@ -798,37 +955,22 @@ doctorRouter.post(
         if (!heaFile) errors.hea_file = "Missing .hea file.";
         else if (!fileHasExtension(heaFile, ".hea")) errors.hea_file = "Expected .hea file.";
 
-        if (!wavFiles.length) {
-          errors.wav_files = "At least one .wav file is required.";
-        } else if (wavFiles.some((file) => !fileHasExtension(file, ".wav"))) {
-          errors.wav_files = "All files must be .wav.";
-        }
-
-        const { payload: spo2Payload, error: spo2Error } = parseSpo2Payload(req.body?.spo2_payload);
-        if (spo2Error) {
-          errors.spo2_payload = spo2Error;
-        }
-
-        const spo2Validation = spo2Payload ? validateSpo2Payload(spo2Payload, { requireAll: true }) : null;
-        if (spo2Validation && !spo2Validation.isValid) {
-          errors.spo2_payload = "Invalid LSTM SpO2 payload.";
-          errors.spo2_fields = spo2Validation.errors;
-        }
+        if (!csvFile) errors.csv_file = "Missing .csv file.";
+        else if (!fileHasExtension(csvFile, ".csv")) errors.csv_file = "Expected .csv file.";
 
         if (Object.keys(errors).length > 0) {
           throw new HttpError(400, "Invalid multi-model payload.", errors);
         }
 
         manualInput = {
-          ...mapSpo2PayloadToIntakeForm(spo2Validation.data, fallbackManualInput),
+          ...buildManualInputFromSpo2Csv(csvFile, fallbackManualInput),
           apnea_files: {
             apn: apnFile.originalname,
             dat: datFile.originalname,
             hea: heaFile.originalname,
           },
-          wav_files: wavFiles.map((file) => file.originalname),
         };
-        uploadedFilesForAi = { apnFile, datFile, heaFile, wavFiles };
+        uploadedFilesForAi = { apnFile, datFile, heaFile, csvFile, wavFiles: [] };
       }
     }
 
@@ -858,15 +1000,22 @@ doctorRouter.post(
 
     let ragInsight = null;
     try {
-      ragInsight = await runManualAiFromAiService({
-        modelKey: modelKey || MANUAL_MODEL_KEYS.all,
-        patientId: profile.patientCode,
-        latestVital: latestVitalPayload,
-        historyVitals: [],
-        latestEnvironment: latestEnvironmentPayload,
-        intakeForm: manualInput,
-        uploadedFiles: uploadedFilesForAi,
-      });
+      if (modelKey === MANUAL_MODEL_KEYS.spo2) {
+        ragInsight = await runSpo2CsvFromAiService({
+          csvFile: uploadedFilesForAi.csvFile,
+          topKGuidelines: 4,
+        });
+      } else {
+        ragInsight = await runManualAiFromAiService({
+          modelKey: modelKey || MANUAL_MODEL_KEYS.all,
+          patientId: profile.patientCode,
+          latestVital: latestVitalPayload,
+          historyVitals: [],
+          latestEnvironment: latestEnvironmentPayload,
+          intakeForm: manualInput,
+          uploadedFiles: uploadedFilesForAi,
+        });
+      }
     } catch {
       ragInsight = await generateExplainableInsight({
         patientId: profile.patientCode,
@@ -884,7 +1033,19 @@ doctorRouter.post(
       );
     }
 
-    const insights = formatAiInsight(buildManualAiInsights({ input: manualInput, ragInsight }));
+    const doctorAiInputSnapshot = buildDoctorAiInputSnapshot({
+      profile,
+      modelKey,
+      manualInput,
+      uploadedFilesForAi,
+      latestVitalPayload,
+      latestEnvironmentPayload,
+    });
+
+    const insights = formatAiInsight({
+      ...buildManualAiInsights({ input: manualInput, ragInsight }),
+      doctorInput: doctorAiInputSnapshot,
+    });
     const safeScore = Math.max(0, Math.min(100, Number(insights?.score ?? 0)));
     const safeConfidence = Math.max(0, Math.min(100, Number(insights?.confidence ?? 0)));
     const safeFactors = sanitizeRiskFactors(insights?.factors);
@@ -900,6 +1061,7 @@ doctorRouter.post(
     });
 
     profile.latestAiInsights = insights;
+    profile.latestDoctorAiInput = doctorAiInputSnapshot;
     profile.status = toProfileStatus(safeScore);
     await profile.save();
 
@@ -935,6 +1097,7 @@ doctorRouter.post(
       patientCode: profile.patientCode,
       source: "doctor-ai-results",
       insights: normalizedInsightsPayload,
+      doctorInput: profile.latestDoctorAiInput || normalizedInsightsPayload?.doctorInput || null,
     };
 
     profile.doctorRiskHistory = [
@@ -972,6 +1135,7 @@ doctorRouter.post(
           confidence: sentConfidence,
           sentAt,
           insights: normalizedInsightsPayload,
+          doctorInput: profile.latestDoctorAiInput || normalizedInsightsPayload?.doctorInput || null,
         },
       });
     }
