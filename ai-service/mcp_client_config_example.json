@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "respirai-multimodal": {
+      "command": "python",
+      "args": [
+        "-m",
+        "app.mcp_server"
+      ],
+      "cwd": "C:/Users/ksont/Desktop/eHealth Platform UI Design/ai-service",
+      "env": {
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}

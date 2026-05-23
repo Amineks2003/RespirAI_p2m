@@ -11,17 +11,12 @@ python-multipart>=0.0.9
 # - lstm_SPO2_model.keras
 tensorflow>=2.16
 
-# Optional: only if you want respiratory model_best.pth runtime inference.
-# torch>=2.2
-
-# Optional: only if you want WFDB .apn/.dat/.hea parsing.
-# wfdb>=4.1
 pypdf>=4.2.0
 scikit-learn>=1.4.0
 joblib>=1.3.0
 cryptography>=42.0.0
 
-# Optional controlled web search
-# Required only if you set RAG_ENABLE_WEB_SEARCH=1
-# and configure TAVILY_API_KEY in .env
 tavily-python>=0.5.0
+# - mcp changes
+mcp[cli]>=1.8.0
+python-dotenv>=1.0.1
