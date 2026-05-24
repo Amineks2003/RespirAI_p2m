@@ -100,19 +100,13 @@ const run = async () => {
           : Math.floor(idx / 12);
 
       return {
-      patient: user._id,
-      spo2: Math.max(82, Math.min(100, item.spo2 + drift + ((idx + patientIndex) % 3) - 1)),
-      hr: Math.max(55, item.hr + ((idx + patientIndex) % 5) - 2),
-      rr: Math.max(10, item.rr + ((idx + patientIndex) % 4) - 1),
-      apneaLevel: Number((Math.max(0, Math.min(10, (item.status === "critical" ? 8 : item.status === "warning" ? 6 : item.status === "moderate" ? 3 : 1) + ((idx + patientIndex) % 3) - 1))).toFixed(1)),
-      coughEvents: item.status === "critical"
-        ? Math.max(6, 22 - Math.floor(idx / 2))
-        : item.status === "warning"
-          ? Math.max(3, 12 - Math.floor(idx / 3))
-          : 2 + ((idx + patientIndex) % 3),
-      wheezeDetected: item.status === "critical" || item.status === "warning",
-      timestamp: hoursAgo(24 - idx),
-      source: "wearable",
+        patient: user._id,
+        spo2: Math.max(82, Math.min(100, item.spo2 + drift + ((idx + patientIndex) % 3) - 1)),
+        hr: Math.max(55, item.hr + ((idx + patientIndex) % 5) - 2),
+        rr: Math.max(10, item.rr + ((idx + patientIndex) % 4) - 1),
+        apneaLevel: Number((Math.max(0, Math.min(10, (item.status === "critical" ? 8 : item.status === "warning" ? 6 : item.status === "moderate" ? 3 : 1) + ((idx + patientIndex) % 3) - 1))).toFixed(1)),
+        timestamp: hoursAgo(24 - idx),
+        source: "wearable",
       };
     });
 
@@ -140,7 +134,7 @@ const run = async () => {
         predictedWindowMinutes: item.status === "critical" ? 120 : item.status === "warning" ? 240 : 420,
         factors: [
           { key: "spo2", label: "SpO₂ Trend", value: `${Math.max(82, item.spo2 - (9 - idx))}%`, severity: score > 75 ? "critical" : score > 55 ? "high" : "moderate" },
-          { key: "cough", label: "Cough Frequency", value: `${Math.max(2, 3 + Math.floor(score / 8))} events/hr`, severity: score > 70 ? "high" : "moderate" },
+          { key: "apnea", label: "Apnea Burden", value: `${Number((Math.max(0, Math.min(10, (item.status === "critical" ? 8 : item.status === "warning" ? 6 : item.status === "moderate" ? 3 : 1) + ((idx + patientIndex) % 2) - 1))).toFixed(1))}/10`, severity: score > 70 ? "high" : "moderate" },
           { key: "aqi", label: "Air Quality", value: `AQI ${Math.max(45, item.aqi - (9 - idx) * 2)}`, severity: item.aqi > 130 ? "high" : "moderate" },
         ],
         guidelines: ["GINA 2024", "WHO", "GOLD", "ATS"],
@@ -180,7 +174,7 @@ const run = async () => {
 
   await Alert.insertMany([
     { patient: james.user._id, doctor: doctor._id, type: "critical", message: "James Okafor — SpO₂ dropped to 86%", status: "open" },
-    { patient: maria.user._id, doctor: doctor._id, type: "warning", message: "Maria Vasquez — Wheeze detected", status: "acknowledged" },
+    { patient: maria.user._id, doctor: doctor._id, type: "warning", message: "Maria Vasquez — apnea severity elevated", status: "acknowledged" },
     { patient: createdPatients[3].user._id, doctor: doctor._id, type: "info", message: "Sensor offline: environment node 8", status: "resolved" },
   ]);
 
@@ -281,7 +275,7 @@ const run = async () => {
       patient: maria.user._id,
       title: "Maria Vasquez — Air Trigger Analysis",
       type: "Patient",
-      summary: "Correlation between AQI spikes and wheeze episodes.",
+      summary: "Correlation between AQI spikes and oxygen saturation dips.",
       status: "ready",
       periodStart: hoursAgo(48),
       periodEnd: new Date(),
@@ -317,8 +311,8 @@ const run = async () => {
     {
       user: doctor._id,
       type: "warning",
-      title: "Wheezing detected",
-      message: "Maria Vasquez — acoustic anomaly detected",
+      title: "Apnea severity elevated",
+      message: "Maria Vasquez — apnea trend requires review",
       read: false,
     },
     {

@@ -129,6 +129,217 @@ const fileSummary = (file) => {
   };
 };
 
+const fileMetaFromUpload = (file) => {
+  if (!file) return null;
+  return {
+    ...fileSummary(file),
+    uploadedAt: new Date(),
+  };
+};
+
+const buildSpo2Snapshot = ({ manualInput, profile }) => {
+  if (!manualInput || typeof manualInput !== "object") return null;
+
+  const snapshot = {
+    patient_id: String(manualInput.patient_id || profile?.patientCode || "").trim(),
+    hour_from_admission: manualInput.hour_from_admission ?? null,
+    age: manualInput.age ?? null,
+    gender: manualInput.gender || manualInput.sex || "",
+    comorbidity_index: manualInput.comorbidity_index ?? null,
+    heart_rate: manualInput.heart_rate ?? null,
+    respiratory_rate: manualInput.respiratory_rate ?? null,
+    spo2: manualInput.spo2 ?? manualInput.spo2_pct ?? null,
+    spo2_pct: manualInput.spo2_pct ?? manualInput.spo2 ?? null,
+    systolic_bp: manualInput.systolic_bp ?? null,
+    diastolic_bp: manualInput.diastolic_bp ?? null,
+    mobility_score: manualInput.mobility_score ?? null,
+    lactate: manualInput.lactate ?? null,
+    hemoglobin: manualInput.hemoglobin ?? null,
+  };
+
+  const hasAny = Object.values(snapshot).some((value) => value !== null && value !== "");
+  return hasAny ? snapshot : null;
+};
+
+
+const toFiniteNumberOrNull = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(String(value).replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizePercentForStorage = (value) => {
+  const parsed = toFiniteNumberOrNull(value);
+  if (parsed === null) return null;
+  return parsed <= 1 ? Number((parsed * 100).toFixed(2)) : Number(parsed.toFixed(2));
+};
+
+const getAiModelResult = (aiResult, key) => {
+  const models = aiResult?.models || {};
+  if (key === "apnea") return models.apnea || models.history || {};
+  if (key === "spo2") return models.spo2 || models.vitals || {};
+  return {};
+};
+
+const getFirstSpo2SequenceResult = (aiResult) => {
+  const candidates = [
+    aiResult?.results,
+    aiResult?.models?.spo2?.results,
+    aiResult?.models?.vitals?.results,
+  ];
+
+  for (const value of candidates) {
+    if (Array.isArray(value) && value.length > 0) return value[0] || {};
+  }
+
+  return {};
+};
+
+const buildModel1ApneaInputSnapshot = ({ profile, manualInput, uploadedFilesForAi, latestVitalPayload, aiResult }) => {
+  const apneaResult = getAiModelResult(aiResult, "apnea");
+  const riskPercent = normalizePercentForStorage(apneaResult.risk_score ?? aiResult?.risk_score ?? aiResult?.fusion?.risk_score);
+  const confidencePercent = normalizePercentForStorage(apneaResult.confidence ?? aiResult?.confidence);
+
+  return {
+    enabled: true,
+    modelName: MANUAL_MODEL_KEYS.apnea,
+    source: "doctor-ai-insights-wfdb",
+    patientId: profile.patientCode,
+    files: {
+      apn: fileSummary(uploadedFilesForAi?.apnFile),
+      dat: fileSummary(uploadedFilesForAi?.datFile),
+      hea: fileSummary(uploadedFilesForAi?.heaFile),
+    },
+    signalMetadata: {
+      recordName: String(uploadedFilesForAi?.heaFile?.originalname || "").replace(/\.hea$/i, "") || null,
+      signalSamples: toFiniteNumberOrNull(apneaResult.signal_samples),
+      windowsAnalyzed: toFiniteNumberOrNull(apneaResult.windows_analyzed ?? apneaResult?.evaluation?.total_windows),
+      trueApneaWindows: toFiniteNumberOrNull(apneaResult?.evaluation?.true_apnea_windows),
+      predictedApneaWindows: toFiniteNumberOrNull(apneaResult?.evaluation?.predicted_apnea_windows),
+    },
+    clinicalContext: {
+      apneaLevel: toFiniteNumberOrNull(manualInput?.apnea_level ?? latestVitalPayload?.apneaLevel ?? apneaResult.apnea_level),
+      spo2: toFiniteNumberOrNull(manualInput?.spo2 ?? manualInput?.spo2_pct ?? latestVitalPayload?.spo2 ?? apneaResult.spo2),
+      respiratoryRate: toFiniteNumberOrNull(manualInput?.respiratory_rate ?? latestVitalPayload?.rr ?? apneaResult.respiration_rate),
+      heartRate: toFiniteNumberOrNull(manualInput?.heart_rate ?? latestVitalPayload?.hr),
+    },
+    modelOutput: {
+      apneaLabel: apneaResult.apnea_label || null,
+      hasApnea: apneaResult.has_apnea ?? null,
+      riskScore: riskPercent,
+      confidence: confidencePercent,
+      details: apneaResult.details || null,
+    },
+  };
+};
+
+const buildModel2Spo2InputSnapshot = ({ profile, manualInput, csvFile, aiResult }) => {
+  const sequenceResult = getFirstSpo2SequenceResult(aiResult);
+  const lastVitals = sequenceResult.last_vitals || {};
+  const probabilityPercent = normalizePercentForStorage(
+    sequenceResult.probability_deterioration ?? aiResult?.risk_score ?? aiResult?.fusion?.risk_score,
+  );
+  const confidencePercent = normalizePercentForStorage(aiResult?.confidence);
+
+  const features = {
+    patient_id: String(manualInput?.patient_id || sequenceResult.patient_id || profile.patientCode),
+    hour_from_admission: toFiniteNumberOrNull(manualInput?.hour_from_admission ?? sequenceResult.last_hour_from_admission),
+    heart_rate: toFiniteNumberOrNull(manualInput?.heart_rate ?? lastVitals.heart_rate),
+    respiratory_rate: toFiniteNumberOrNull(manualInput?.respiratory_rate ?? lastVitals.respiratory_rate),
+    spo2_pct: toFiniteNumberOrNull(manualInput?.spo2_pct ?? manualInput?.spo2 ?? lastVitals.spo2_pct ?? lastVitals.spo2),
+    systolic_bp: toFiniteNumberOrNull(manualInput?.systolic_bp ?? lastVitals.systolic_bp),
+    diastolic_bp: toFiniteNumberOrNull(manualInput?.diastolic_bp ?? lastVitals.diastolic_bp),
+    mobility_score: toFiniteNumberOrNull(manualInput?.mobility_score),
+    lactate: toFiniteNumberOrNull(manualInput?.lactate),
+    hemoglobin: toFiniteNumberOrNull(manualInput?.hemoglobin),
+    age: toFiniteNumberOrNull(manualInput?.age),
+    gender: manualInput?.gender ?? manualInput?.sex ?? null,
+    comorbidity_index: toFiniteNumberOrNull(manualInput?.comorbidity_index),
+    deterioration_next_12h: manualInput?.deterioration_next_12h ?? null,
+  };
+
+  return {
+    enabled: true,
+    modelName: MANUAL_MODEL_KEYS.spo2,
+    source: "doctor-ai-insights-csv",
+    patient_id: features.patient_id,
+    csvFile: fileSummary(csvFile),
+    rowsUsed: toFiniteNumberOrNull(sequenceResult.rows_used),
+    lastHourFromAdmission: toFiniteNumberOrNull(sequenceResult.last_hour_from_admission),
+    features,
+    modelOutput: {
+      probabilityDeterioration: probabilityPercent,
+      prediction: sequenceResult.prediction ?? null,
+      riskLabel: sequenceResult.risk_label || aiResult?.risk_label || null,
+      status: sequenceResult.status || null,
+      riskScore: probabilityPercent,
+      confidence: confidencePercent,
+    },
+  };
+};
+
+const getModel1ApneaPercent = (record) =>
+  normalizePercentForStorage(record?.modelInputs?.model1Apnea?.modelOutput?.riskScore);
+
+const getModel2DeteriorationPercent = (record) =>
+  normalizePercentForStorage(
+    record?.modelInputs?.model2Spo2?.modelOutput?.probabilityDeterioration ??
+      record?.modelInputs?.model2Spo2?.modelOutput?.riskScore,
+  );
+
+const getModel2Spo2Feature = (record) =>
+  toFiniteNumberOrNull(record?.modelInputs?.model2Spo2?.features?.spo2_pct ?? record?.modelInputs?.model2Spo2?.features?.spo2);
+
+const recordModelInputsAsVitalRecord = async ({
+  profile,
+  modelKey,
+  manualInput,
+  uploadedFilesForAi,
+  latestVitalPayload,
+  latestEnvironmentPayload,
+  aiResult,
+}) => {
+  const modelInputs = {};
+
+  if (modelKey === MANUAL_MODEL_KEYS.apnea || modelKey === MANUAL_MODEL_KEYS.all) {
+    modelInputs.model1Apnea = buildModel1ApneaInputSnapshot({
+      profile,
+      manualInput,
+      uploadedFilesForAi,
+      latestVitalPayload,
+      aiResult,
+    });
+  }
+
+  if (modelKey === MANUAL_MODEL_KEYS.spo2 || modelKey === MANUAL_MODEL_KEYS.all) {
+    modelInputs.model2Spo2 = buildModel2Spo2InputSnapshot({
+      profile,
+      manualInput,
+      csvFile: uploadedFilesForAi?.csvFile,
+      aiResult,
+    });
+  }
+
+  if (!Object.keys(modelInputs).length) return null;
+
+  return VitalRecord.create({
+    patient: profile.user._id,
+    timestamp: new Date(),
+    source: "doctor-ai-insights",
+    spo2: toFiniteNumberOrNull(manualInput?.spo2_pct ?? manualInput?.spo2 ?? latestVitalPayload?.spo2) ?? 98,
+    hr: toFiniteNumberOrNull(manualInput?.heart_rate ?? latestVitalPayload?.hr) ?? 72,
+    rr: toFiniteNumberOrNull(manualInput?.respiratory_rate ?? latestVitalPayload?.rr) ?? 16,
+    temperature: toFiniteNumberOrNull(manualInput?.temperature) ?? 37,
+    apneaLevel: toFiniteNumberOrNull(latestVitalPayload?.apneaLevel) ?? 0,
+    coughEvents: toFiniteNumberOrNull(latestVitalPayload?.coughEvents) ?? 0,
+    wheezeDetected: Boolean(latestVitalPayload?.wheezeDetected),
+    aqi: toFiniteNumberOrNull(latestEnvironmentPayload?.aqi),
+    roomTemperature: toFiniteNumberOrNull(latestEnvironmentPayload?.temperature),
+    humidity: toFiniteNumberOrNull(latestEnvironmentPayload?.humidity),
+    modelInputs,
+  });
+};
+
 const buildDoctorAiInputSnapshot = ({
   profile,
   modelKey,
@@ -179,9 +390,9 @@ const SPO2_CSV_ALIASES = {
   heart_rate_bpm: "heart_rate",
   respiratory_rate: "respiratory_rate",
   respiratory_rate_br_min: "respiratory_rate",
-  spo2: "spo2",
-  spo2_pct: "spo2",
-  sp_o2: "spo2",
+  spo2: "spo2_pct",
+  spo2_pct: "spo2_pct",
+  sp_o2: "spo2_pct",
   systolic_bp: "systolic_bp",
   systolic_bp_mmhg: "systolic_bp",
   diastolic_bp: "diastolic_bp",
@@ -191,6 +402,7 @@ const SPO2_CSV_ALIASES = {
   lactate_mmol_l: "lactate",
   hemoglobin: "hemoglobin",
   hemoglobin_g_dl: "hemoglobin",
+  deterioration_next_12h: "deterioration_next_12h",
 };
 
 const splitCsvLine = (line, delimiter) => {
@@ -272,24 +484,25 @@ const buildManualInputFromSpo2Csv = (csvFile, fallback = {}) => {
 
     const numericFields = [
       "hour_from_admission",
-      "age",
-      "comorbidity_index",
       "heart_rate",
       "respiratory_rate",
-      "spo2",
+      "spo2_pct",
       "systolic_bp",
       "diastolic_bp",
       "mobility_score",
       "lactate",
       "hemoglobin",
+      "age",
+      "comorbidity_index",
+      "deterioration_next_12h",
     ];
 
     numericFields.forEach((field) => {
       const value = csvNumber(lastRow[field]);
       if (value !== null) {
-        if (field === "spo2") {
-          manualInput.spo2 = value;
+        if (field === "spo2_pct") {
           manualInput.spo2_pct = value;
+          manualInput.spo2 = value;
         } else {
           manualInput[field] = value;
         }
@@ -489,6 +702,8 @@ doctorRouter.get(
           name: toPatientName(profile.user),
           email: profile.user.email,
           condition: profile.condition,
+          age: profile.dob ? Math.max(0, new Date().getFullYear() - new Date(profile.dob).getFullYear()) : (latestVital?.modelInputs?.model2Spo2?.features?.age ?? null),
+          gender: profile.gender || latestVital?.modelInputs?.model2Spo2?.features?.gender || "",
           status: profile.status,
           admittedAt: profile.admittedAt,
           latestUploadAt: uploadAt,
@@ -586,7 +801,8 @@ doctorRouter.get(
         userId: profile.user._id,
         name: toPatientName(profile.user),
         email: profile.user.email,
-        age: profile.dob ? Math.max(0, new Date().getFullYear() - new Date(profile.dob).getFullYear()) : null,
+        age: profile.dob ? Math.max(0, new Date().getFullYear() - new Date(profile.dob).getFullYear()) : (latestVital?.modelInputs?.model2Spo2?.features?.age ?? null),
+        gender: profile.gender || latestVital?.modelInputs?.model2Spo2?.features?.gender || "",
         profile,
         latestVital,
         latestEnvironment,
@@ -681,6 +897,85 @@ doctorRouter.get(
     });
   }),
 );
+doctorRouter.get(
+  "/patients/:patientIdentifier/model-output-trends",
+  asyncHandler(async (req, res) => {
+    const profile = await resolvePatientByIdentifier(req.params.patientIdentifier);
+    ensureAccess(req.user.userId, profile);
+    await ensurePatientClinicalData(profile);
+
+    const limit = Math.min(200, Number(req.query.limit || 48));
+
+    const records = await VitalRecord.find({ patient: profile.user._id })
+      .sort({ timestamp: -1 })
+      .limit(limit);
+
+    const chronological = [...records].reverse();
+
+    const model1Trend = chronological
+      .map((record) => ({
+        timestamp: record.timestamp,
+        percent: getModel1ApneaPercent(record),
+        source: record.source,
+      }))
+      .filter((point) => typeof point.percent === "number");
+
+    const model2RiskTrend = chronological
+      .map((record) => ({
+        timestamp: record.timestamp,
+        percent: getModel2DeteriorationPercent(record),
+        source: record.source,
+      }))
+      .filter((point) => typeof point.percent === "number");
+
+    const model2Spo2Trend = chronological
+      .map((record) => ({
+        timestamp: record.timestamp,
+        spo2_pct: getModel2Spo2Feature(record),
+        source: record.source,
+      }))
+      .filter((point) => typeof point.spo2_pct === "number");
+
+    const latestModel1Record = [...records].find((record) => getModel1ApneaPercent(record) !== null) || null;
+    const latestModel2Record = [...records].find((record) => getModel2DeteriorationPercent(record) !== null) || null;
+    const latestModel2Features = latestModel2Record?.modelInputs?.model2Spo2?.features || {};
+
+    return res.json({
+      success: true,
+      patient: {
+        id: profile.patientCode,
+        age: profile.dob ? Math.max(0, new Date().getFullYear() - new Date(profile.dob).getFullYear()) : (latestModel2Features.age ?? null),
+        gender: profile.gender || latestModel2Features.gender || "",
+      },
+      model1: {
+        latest: latestModel1Record
+          ? {
+              timestamp: latestModel1Record.timestamp,
+              percent: getModel1ApneaPercent(latestModel1Record),
+              output: latestModel1Record.modelInputs?.model1Apnea?.modelOutput || {},
+              input: latestModel1Record.modelInputs?.model1Apnea || {},
+            }
+          : null,
+        trend: model1Trend,
+      },
+      model2: {
+        latest: latestModel2Record
+          ? {
+              timestamp: latestModel2Record.timestamp,
+              percent: getModel2DeteriorationPercent(latestModel2Record),
+              spo2_pct: getModel2Spo2Feature(latestModel2Record),
+              output: latestModel2Record.modelInputs?.model2Spo2?.modelOutput || {},
+              features: latestModel2Record.modelInputs?.model2Spo2?.features || {},
+              input: latestModel2Record.modelInputs?.model2Spo2 || {},
+            }
+          : null,
+        riskTrend: model2RiskTrend,
+        spo2Trend: model2Spo2Trend,
+      },
+    });
+  }),
+);
+
 
 doctorRouter.get(
   "/patients/:patientIdentifier/environment",
@@ -974,22 +1269,13 @@ doctorRouter.post(
       }
     }
 
-    const symptomScore = [
-      manualInput.cough,
-      manualInput.shortness_of_breath,
-      manualInput.wheezing,
-      manualInput.chest_pain,
-      manualInput.fatigue,
-    ].filter(Boolean).length;
-    const estimatedApneaLevel = Math.min(10, symptomScore * 2 + (manualInput.shortness_of_breath ? 2 : 0));
-    const estimatedCoughEvents = manualInput.cough ? 8 : 0;
+    const apneaValue = Number(manualInput.apnea_level ?? manualInput.apneaLevel ?? 0);
+    const estimatedApneaLevel = Number.isFinite(apneaValue) ? apneaValue : 0;
 
     const latestVitalPayload = {
       spo2: Number(manualInput.spo2 ?? 98),
       rr: Number(manualInput.respiratory_rate ?? 16),
       hr: Number(manualInput.heart_rate ?? 72),
-      coughEvents: estimatedCoughEvents,
-      wheezeDetected: Boolean(manualInput.wheezing),
       apneaLevel: estimatedApneaLevel,
     };
     const latestEnvironmentPayload = {
@@ -1060,8 +1346,39 @@ doctorRouter.post(
       status: "active",
     });
 
+    await recordModelInputsAsVitalRecord({
+      profile,
+      modelKey: modelKey || MANUAL_MODEL_KEYS.all,
+      manualInput,
+      uploadedFilesForAi,
+      latestVitalPayload,
+      latestEnvironmentPayload,
+      aiResult: ragInsight,
+    });
+
+    const aiModelData = profile.aiModelData || {};
+    const modelDataTimestamp = new Date();
+
+    if (modelKey === MANUAL_MODEL_KEYS.apnea || modelKey === MANUAL_MODEL_KEYS.all) {
+      aiModelData.apneaSignals = {
+        apn: fileMetaFromUpload(uploadedFilesForAi.apnFile),
+        dat: fileMetaFromUpload(uploadedFilesForAi.datFile),
+        hea: fileMetaFromUpload(uploadedFilesForAi.heaFile),
+        uploadedAt: modelDataTimestamp,
+      };
+    }
+
+    if (modelKey === MANUAL_MODEL_KEYS.spo2 || modelKey === MANUAL_MODEL_KEYS.all) {
+      aiModelData.spo2History = {
+        csv: fileMetaFromUpload(uploadedFilesForAi.csvFile),
+        lastRow: buildSpo2Snapshot({ manualInput, profile }),
+        uploadedAt: modelDataTimestamp,
+      };
+    }
+
     profile.latestAiInsights = insights;
     profile.latestDoctorAiInput = doctorAiInputSnapshot;
+    profile.aiModelData = aiModelData;
     profile.status = toProfileStatus(safeScore);
     await profile.save();
 
@@ -1642,7 +1959,7 @@ doctorRouter.get(
         {
           badge: "GINA",
           reference: "GINA 2024",
-          text: "Declining SpO₂ with persistent cough/wheeze indicates elevated short-term exacerbation risk.",
+          text: "Declining SpO₂ with elevated respiratory rate indicates elevated short-term exacerbation risk.",
           relevance: 94,
         },
         {

@@ -15,9 +15,7 @@ const NUMERIC_RULES = {
 };
 
 const BOOLEAN_FIELDS = [
-  "cough",
   "shortness_of_breath",
-  "wheezing",
   "chest_pain",
   "fatigue",
   "asthma",
@@ -77,9 +75,7 @@ const defaultFormData = {
   heart_rate: 80,
   respiratory_rate: 18,
   temperature: 37.0,
-  cough: false,
   shortness_of_breath: false,
-  wheezing: false,
   chest_pain: false,
   fatigue: false,
   asthma: false,

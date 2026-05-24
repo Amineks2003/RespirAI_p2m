@@ -10,9 +10,7 @@ const DEFAULT_INTAKE_FORM = {
   heart_rate: 80,
   respiratory_rate: 18,
   temperature: 37,
-  cough: false,
   shortness_of_breath: false,
-  wheezing: false,
   chest_pain: false,
   fatigue: false,
   asthma: false,
@@ -126,14 +124,6 @@ const normalizeIntakeForm = (
     latestEnvironment = {},
   } = {},
 ) => {
-  const fallbackCoughEvents = firstNumber(
-    input?.cough_events_per_hour,
-    input?.coughEvents,
-    latestVital?.coughEvents,
-    latestVital?.cough_events_per_hour,
-    0,
-  );
-
   const spo2 = clamp(
     firstNumber(input?.spo2, latestVital?.spo2, DEFAULT_INTAKE_FORM.spo2) ?? DEFAULT_INTAKE_FORM.spo2,
     70,
@@ -201,21 +191,9 @@ const normalizeIntakeForm = (
     heart_rate: heartRate,
     respiratory_rate: respiratoryRate,
     temperature: bodyTemperature,
-    cough: firstBoolean(
-      input?.cough,
-      fallbackCoughEvents !== null ? fallbackCoughEvents > 0 : null,
-      false,
-    ) ?? false,
     shortness_of_breath: firstBoolean(
       input?.shortness_of_breath,
       respiratoryRate >= 22,
-      false,
-    ) ?? false,
-    wheezing: firstBoolean(
-      input?.wheezing,
-      input?.wheeze_detected,
-      input?.wheezeDetected,
-      latestVital?.wheezeDetected,
       false,
     ) ?? false,
     chest_pain: firstBoolean(input?.chest_pain, false) ?? false,
@@ -247,9 +225,7 @@ const normalizeIntakeForm = (
 
   const bmi = normalized.weight_kg / Math.max(0.25, (normalized.height_cm / 100) ** 2);
   const symptomCount = [
-    normalized.cough,
     normalized.shortness_of_breath,
-    normalized.wheezing,
     normalized.chest_pain,
     normalized.fatigue,
   ].filter(Boolean).length;
@@ -291,11 +267,10 @@ const buildModelOutputsFromSignals = (signals) => {
   const temperatureRisk = clamp(Math.abs(signals.temperature - 37) * 40, 0, 100);
   const vitalsRisk = clamp(Math.round(0.45 * spo2Risk + 0.25 * heartRisk + 0.2 * rrRisk + 0.1 * temperatureRisk), 0, 100);
 
-  const symptomLoad = (signals.symptom_count / 5) * 65;
+  const symptomLoad = (signals.symptom_count / 3) * 65;
   const symptomsRisk = clamp(
     Math.round(
       symptomLoad
-      + (signals.wheezing ? 12 : 0)
       + (signals.shortness_of_breath ? 15 : 0)
       + (signals.chest_pain ? 10 : 0),
     ),
@@ -336,7 +311,7 @@ const buildModelOutputsFromSignals = (signals) => {
       label: "Symptoms Model",
       score: symptomsRisk,
       status: statusFromPercent(symptomsRisk),
-      details: `${signals.symptom_count}/5 key symptoms · wheezing ${signals.wheezing ? "yes" : "no"} · dyspnea ${signals.shortness_of_breath ? "yes" : "no"}`,
+      details: `${signals.symptom_count}/3 key symptoms · dyspnea ${signals.shortness_of_breath ? "yes" : "no"} · chest pain ${signals.chest_pain ? "yes" : "no"}`,
     },
     historyModel: {
       label: "History Model",
@@ -387,7 +362,7 @@ const buildFactorsFromSignals = (signals, score) => {
     factors.push({
       key: "symptoms",
       label: "Symptom Burden",
-      value: `${signals.symptom_count}/5 reported symptoms`,
+      value: `${signals.symptom_count}/3 reported symptoms`,
       severity,
     });
   }
@@ -438,13 +413,6 @@ const buildModelOutputsFromAiService = (models = {}) => {
       fallbackDetails: (source) =>
         `Apnea level ${Number(source?.apnea_level ?? 0).toFixed(1)}/10 | SpO2 ${Number(source?.spo2 ?? 98)}% | RR ${Number(source?.respiration_rate ?? source?.respiratory_rate ?? 16)}`,
     },
-    {
-      key: "respiratoryModel",
-      source: models?.respiratory || null,
-      label: "Respiratory Sound Model",
-      fallbackDetails: (source) =>
-        `${Number(source?.symptom_count ?? 0)} symptoms | wheezing ${source?.wheezing ? "yes" : "no"} | cough ${Number(source?.cough_frequency_per_hour ?? 0)}/hr`,
-    },
   ];
 
   if (finalModelSources.some((item) => item.source && typeof item.source === "object")) {
@@ -487,7 +455,7 @@ const buildModelOutputsFromAiService = (models = {}) => {
       label: "Symptoms Model",
       score: symptomsRisk,
       status: statusFromPercent(symptomsRisk),
-      details: `${Number(symptomsSource?.symptom_count ?? 0)} symptoms · wheezing ${(symptomsSource?.wheezing ?? symptomsSource?.wheezing_detected) ? "yes" : "no"} · cough ${(symptomsSource?.cough ?? Number(symptomsSource?.cough_frequency_per_hour ?? 0) > 0) ? "yes" : "no"}`,
+      details: `${Number(symptomsSource?.symptom_count ?? 0)} symptoms · dyspnea ${(symptomsSource?.shortness_of_breath ?? symptomsSource?.dyspnea) ? "yes" : "no"} · chest pain ${symptomsSource?.chest_pain ? "yes" : "no"}`,
     },
     historyModel: {
       label: "History Model",

@@ -63,13 +63,115 @@ const formatDoctorAiData = ({ profile, latestVital, latestEnvironment, latestRis
   };
 };
 
+const toFiniteNumber = (...values) => {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value.trim().replace(",", "."));
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+};
+
+const normalizePercent = (...values) => {
+  const value = toFiniteNumber(...values);
+  if (value === null) return null;
+  return value <= 1 ? Number((value * 100).toFixed(2)) : Number(value.toFixed(2));
+};
+
+const latestModel2 = (record) => record?.modelInputs?.model2Spo2 || {};
+const latestModel1 = (record) => record?.modelInputs?.model1Apnea || {};
+
+const getModel2Spo2Value = (record) => {
+  const model2 = latestModel2(record);
+  const features = model2?.features || {};
+  return toFiniteNumber(features.spo2_pct, features.spo2, record?.spo2);
+};
+
+const getModel2RespiratoryRate = (record) => {
+  const model2 = latestModel2(record);
+  const features = model2?.features || {};
+  return toFiniteNumber(features.respiratory_rate, record?.rr);
+};
+
+const getModel2HeartRate = (record) => {
+  const model2 = latestModel2(record);
+  const features = model2?.features || {};
+  return toFiniteNumber(features.heart_rate, record?.hr);
+};
+
+const getModel2DeteriorationPercent = (record) => {
+  const model2 = latestModel2(record);
+  const output = model2?.modelOutput || {};
+  return normalizePercent(
+    output.probabilityDeterioration,
+    output.probability_deterioration,
+    output.riskScore,
+    output.risk_score,
+  );
+};
+
+const getModel1ApneaPercent = (record) => {
+  const model1 = latestModel1(record);
+  const output = model1?.modelOutput || {};
+  return normalizePercent(
+    output.riskScore,
+    output.risk_score,
+    output.probability,
+    output.apneaProbability,
+  );
+};
+
+const buildPatientModelVitals = ({ latestVital, latestModel1Vital, latestModel2Vital }) => {
+  const model2Record = latestModel2Vital || latestVital;
+  const model1Record = latestModel1Vital || latestVital;
+
+  return {
+    spo2: getModel2Spo2Value(model2Record),
+    respiratoryRate: getModel2RespiratoryRate(model2Record),
+    heartRate: getModel2HeartRate(model2Record),
+    model2DeteriorationPercent: getModel2DeteriorationPercent(model2Record),
+    apneaRiskPercent: getModel1ApneaPercent(model1Record),
+    model1Timestamp: latestModel1Vital?.timestamp || null,
+    model2Timestamp: latestModel2Vital?.timestamp || null,
+  };
+};
+
+const valueForPatientHistoryMetric = (record, metric) => {
+  if (metric === "spo2") return getModel2Spo2Value(record);
+  if (metric === "hr") return getModel2HeartRate(record);
+  if (metric === "rr") return getModel2RespiratoryRate(record);
+  if (metric === "apneaLevel" || metric === "apneaRisk") return getModel1ApneaPercent(record);
+  if (metric === "model2Deterioration") return getModel2DeteriorationPercent(record);
+  return toFiniteNumber(record?.[metric]);
+};
+
+
 patientRouter.get(
   "/me/home",
   asyncHandler(async (req, res) => {
     const { profile } = await getPatientContext(req.user.userId);
 
-    const [latestVital, latestEnvironment, latestRisk, medications, unreadNotifications, recentVitals] = await Promise.all([
+    const [
+      latestVital,
+      latestModel1Vital,
+      latestModel2Vital,
+      latestEnvironment,
+      latestRisk,
+      medications,
+      unreadNotifications,
+      recentVitals,
+    ] = await Promise.all([
       VitalRecord.findOne({ patient: req.user.userId }).sort({ timestamp: -1 }),
+      VitalRecord.findOne({
+        patient: req.user.userId,
+        "modelInputs.model1Apnea.enabled": true,
+      }).sort({ timestamp: -1 }),
+      VitalRecord.findOne({
+        patient: req.user.userId,
+        "modelInputs.model2Spo2.enabled": true,
+      }).sort({ timestamp: -1 }),
       EnvironmentSnapshot.findOne({ patient: req.user.userId }).sort({ timestamp: -1 }),
       RiskAssessment.findOne({ patient: req.user.userId }).sort({ createdAt: -1 }),
       MedicationSchedule.find({ patient: req.user.userId }).sort({ createdAt: 1 }),
@@ -93,6 +195,11 @@ patientRouter.get(
         latestVital,
         latestEnvironment,
         latestRisk,
+        modelVitals: buildPatientModelVitals({
+          latestVital,
+          latestModel1Vital,
+          latestModel2Vital,
+        }),
         latestDoctorSentResult: profile.latestDoctorSentResult || null,
         doctorAiData: formatDoctorAiData({
           profile,
@@ -182,22 +289,34 @@ patientRouter.get(
 
     const metric = String(req.query.metric || "spo2");
     const limit = Math.min(300, Number(req.query.limit || 50));
-    const allowedMetrics = ["spo2", "hr", "rr", "apneaLevel", "coughEvents"];
+    const allowedMetrics = ["spo2", "hr", "rr", "apneaLevel", "apneaRisk", "model2Deterioration"];
     if (!allowedMetrics.includes(metric)) {
       throw new HttpError(400, `metric must be one of: ${allowedMetrics.join(", ")}`);
     }
 
     const records = await VitalRecord.find({ patient: req.user.userId }).sort({ timestamp: -1 }).limit(limit);
 
-    const trend = [...records].reverse().map((record) => ({
-      timestamp: record.timestamp,
-      value: record[metric],
-      spo2: record.spo2,
-      hr: record.hr,
-      rr: record.rr,
-      apneaLevel: record.apneaLevel,
-      coughEvents: record.coughEvents,
-    }));
+    const trend = [...records].reverse().map((record) => {
+      const modelSpo2 = getModel2Spo2Value(record);
+      const modelHeartRate = getModel2HeartRate(record);
+      const modelRespiratoryRate = getModel2RespiratoryRate(record);
+      const apneaRiskPercent = getModel1ApneaPercent(record);
+      const model2DeteriorationPercent = getModel2DeteriorationPercent(record);
+
+      return {
+        timestamp: record.timestamp,
+        value: valueForPatientHistoryMetric(record, metric),
+        spo2: modelSpo2 ?? record.spo2,
+        hr: modelHeartRate ?? record.hr,
+        rr: modelRespiratoryRate ?? record.rr,
+        apneaLevel: apneaRiskPercent ?? record.apneaLevel,
+        modelSpo2,
+        modelHeartRate,
+        modelRespiratoryRate,
+        apneaRiskPercent,
+        model2DeteriorationPercent,
+      };
+    });
 
     return res.json({ success: true, metric, records: trend });
   }),

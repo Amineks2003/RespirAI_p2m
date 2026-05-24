@@ -4,7 +4,7 @@ import {
   Shield, Wind, Heart, Bell, ChevronRight, Activity,
   Sun, Home, BarChart2, MessageCircle, Droplets,
   Thermometer, Zap, Clock, CheckCircle,
-  TrendingDown, TrendingUp, X, Send, Mic, Leaf, Pill,
+  TrendingDown, TrendingUp, X, Send, Mic, Leaf,
   Calendar, User, LogOut, Phone, Camera, FileText,
   Sparkles, CloudRain, CloudSun,
 } from "lucide-react";
@@ -53,14 +53,63 @@ function HomeScreen({ homeData, meds, onToggleMedication, pendingMedicationIds, 
   const latestVital = homeData?.latestVital || {};
   const latestEnvironment = homeData?.latestEnvironment || {};
   const aiInsight = homeData?.aiInsight || {};
+  const modelVitals = homeData?.modelVitals || {};
 
   const hasNumeric = (value: unknown) => typeof value === "number" && Number.isFinite(value);
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  const toNumberOrNull = (...values: unknown[]) => {
+    for (const value of values) {
+      if (typeof value === "number" && Number.isFinite(value)) return value;
+      if (typeof value === "string" && value.trim()) {
+        const parsed = Number(value.replace(",", "."));
+        if (Number.isFinite(parsed)) return parsed;
+      }
+    }
+    return null;
+  };
+  const normalizePercent = (...values: unknown[]) => {
+    const value = toNumberOrNull(...values);
+    if (value === null) return null;
+    return value <= 1 ? Number((value * 100).toFixed(2)) : Number(value.toFixed(2));
+  };
 
-  const spo2 = hasNumeric(latestVital.spo2) ? latestVital.spo2 : null;
-  const heartRate = hasNumeric(latestVital.hr) ? latestVital.hr : null;
-  const breathingRate = hasNumeric(latestVital.rr) ? latestVital.rr : null;
-  const coughEvents = hasNumeric(latestVital.coughEvents) ? latestVital.coughEvents : null;
+  const model2Features = latestVital?.modelInputs?.model2Spo2?.features || {};
+  const model2Output = latestVital?.modelInputs?.model2Spo2?.modelOutput || {};
+  const model1Output = latestVital?.modelInputs?.model1Apnea?.modelOutput || {};
+  const model1Context = latestVital?.modelInputs?.model1Apnea?.clinicalContext || {};
+
+  // Patient home now follows the same model-specific data used in the doctor dashboard:
+  // - Oxygen / RR / HR come from Model 2 CSV features when available.
+  // - Apnea is the latest Model 1 CNN-BiLSTM percentage output, not a /10 scale.
+  const spo2 = toNumberOrNull(
+    modelVitals.spo2,
+    model2Features.spo2_pct,
+    model2Features.spo2,
+    latestVital.spo2,
+  );
+  const heartRate = toNumberOrNull(
+    modelVitals.heartRate,
+    model2Features.heart_rate,
+    latestVital.hr,
+  );
+  const breathingRate = toNumberOrNull(
+    modelVitals.respiratoryRate,
+    model2Features.respiratory_rate,
+    latestVital.rr,
+  );
+  const apneaRiskPercent = normalizePercent(
+    modelVitals.apneaRiskPercent,
+    model1Output.riskScore,
+    model1Output.risk_score,
+    model1Output.probability,
+  );
+  const model2RiskPercent = normalizePercent(
+    modelVitals.model2DeteriorationPercent,
+    model2Output.probabilityDeterioration,
+    model2Output.probability_deterioration,
+    model2Output.riskScore,
+  );
+
   const aqi = hasNumeric(latestEnvironment.aqi) ? latestEnvironment.aqi : null;
   const humidity = hasNumeric(latestEnvironment.humidity) ? latestEnvironment.humidity : null;
   const temperature = hasNumeric(latestEnvironment.temperature) ? latestEnvironment.temperature : null;
@@ -68,14 +117,45 @@ function HomeScreen({ homeData, meds, onToggleMedication, pendingMedicationIds, 
   const spo2Progress = spo2 !== null ? clamp(spo2, 0, 100) : 0;
   const breathingProgress = breathingRate !== null ? clamp(((breathingRate - 8) / 20) * 100, 0, 100) : 0;
   const heartProgress = heartRate !== null ? clamp(((heartRate - 45) / 95) * 100, 0, 100) : 0;
+  const apneaProgress = apneaRiskPercent !== null ? clamp(apneaRiskPercent, 0, 100) : 0;
+  const riskLevel = (score: number) => {
+    if (score >= 75) return "Critical";
+    if (score >= 50) return "High";
+    if (score >= 30) return "Moderate";
+    return "Low";
+  };
+  const apneaSeverity = apneaRiskPercent === null ? "Unknown" : riskLevel(apneaRiskPercent);
+  const apneaColorClass = apneaRiskPercent === null
+    ? "text-slate-500"
+    : apneaRiskPercent >= 75
+      ? "text-red-600"
+      : apneaRiskPercent >= 50
+        ? "text-amber-600"
+        : "text-emerald-600";
+  const apneaBarClass = apneaRiskPercent === null
+    ? "bg-slate-300"
+    : apneaRiskPercent >= 75
+      ? "bg-red-500"
+      : apneaRiskPercent >= 50
+        ? "bg-amber-500"
+        : "bg-emerald-500";
 
-  const coughLevel = coughEvents === null
-    ? "Unknown"
-    : coughEvents <= 3
-      ? "Low"
-      : coughEvents <= 8
-        ? "Moderate"
-        : "High";
+  const model2Progress = model2RiskPercent !== null ? clamp(model2RiskPercent, 0, 100) : 0;
+  const model2Severity = model2RiskPercent === null ? "Unknown" : riskLevel(model2RiskPercent);
+  const model2ColorClass = model2RiskPercent === null
+    ? "text-slate-500"
+    : model2RiskPercent >= 75
+      ? "text-red-600"
+      : model2RiskPercent >= 50
+        ? "text-amber-600"
+        : "text-emerald-600";
+  const model2BarClass = model2RiskPercent === null
+    ? "bg-slate-300"
+    : model2RiskPercent >= 75
+      ? "bg-red-500"
+      : model2RiskPercent >= 50
+        ? "bg-amber-500"
+        : "bg-emerald-500";
 
   const aqiStatus = aqi === null
     ? "Unknown"
@@ -94,13 +174,6 @@ function HomeScreen({ homeData, meds, onToggleMedication, pendingMedicationIds, 
       : temperature <= 25
         ? "Comfortable"
         : "Warm";
-
-  const riskLevel = (score: number) => {
-    if (score >= 75) return "Critical";
-    if (score >= 50) return "High";
-    if (score >= 30) return "Moderate";
-    return "Low";
-  };
 
   const monitoringLabel = latestVital?.timestamp
     ? `Live monitoring · updated ${new Date(latestVital.timestamp).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
@@ -175,46 +248,53 @@ function HomeScreen({ homeData, meds, onToggleMedication, pendingMedicationIds, 
             </div>
           </div>
 
-          {/* Cough Activity */}
+          {/* Apnea Model 1 Result */}
           <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
             <div className="flex items-center gap-2 mb-3">
-              <div className="w-8 h-8 rounded-xl bg-teal-100 flex items-center justify-center">
-                <Mic className="w-4 h-4 text-teal-500" />
+              <div className="w-8 h-8 rounded-xl bg-cyan-100 flex items-center justify-center">
+                <Wind className="w-4 h-4 text-cyan-500" />
               </div>
-              <span className="text-slate-500 text-xs font-medium">Cough Activity</span>
+              <span className="text-slate-500 text-xs font-medium">Apnea — Model 1</span>
             </div>
             <div className="flex items-end gap-1 mb-1">
-              <span className="text-emerald-600 font-black" style={{ fontSize: "26px", lineHeight: 1 }}>{coughLevel}</span>
+              <span className={`${apneaColorClass} font-black`} style={{ fontSize: "32px", lineHeight: 1 }}>
+                {apneaRiskPercent !== null ? formatTwoDecimals(apneaRiskPercent) : "--"}
+              </span>
+              <span className="text-slate-400 text-sm mb-1">{apneaRiskPercent !== null ? "%" : ""}</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <CheckCircle className="w-3 h-3 text-emerald-500" />
-              <span className="text-emerald-600 text-xs font-semibold">{coughEvents !== null ? `${formatTwoDecimals(coughEvents)} events/hr` : "--"}</span>
+              <CheckCircle className={`w-3 h-3 ${apneaColorClass}`} />
+              <span className={`${apneaColorClass} text-xs font-semibold`}>
+                {apneaRiskPercent !== null ? `${apneaSeverity} CNN-BiLSTM result` : "No Model 1 result yet"}
+              </span>
             </div>
-            <div className="mt-2.5 flex gap-1">
-              {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className={`flex-1 h-5 rounded-md ${i <= 1 ? "bg-emerald-400" : "bg-slate-100"}`} />
-              ))}
+            <div className="mt-2.5 w-full bg-slate-100 rounded-full h-1.5">
+              <div className={`h-1.5 rounded-full ${apneaBarClass}`} style={{ width: `${apneaProgress}%` }} />
             </div>
           </div>
 
-          {/* Breathing Rate */}
+          {/* Model 2 Result */}
           <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-8 h-8 rounded-xl bg-sky-100 flex items-center justify-center">
                 <Wind className="w-4 h-4 text-sky-500" />
               </div>
-              <span className="text-slate-500 text-xs font-medium">Breathing Rate</span>
+              <span className="text-slate-500 text-xs font-medium">Model 2 Result</span>
             </div>
             <div className="flex items-end gap-1 mb-1">
-              <span className="text-emerald-600 font-black" style={{ fontSize: "32px", lineHeight: 1 }}>{breathingRate !== null ? formatTwoDecimals(breathingRate) : "--"}</span>
-              <span className="text-slate-400 text-sm mb-1">{breathingRate !== null ? "br/min" : ""}</span>
+              <span className={`${model2ColorClass} font-black`} style={{ fontSize: "32px", lineHeight: 1 }}>
+                {model2RiskPercent !== null ? formatTwoDecimals(model2RiskPercent) : "--"}
+              </span>
+              <span className="text-slate-400 text-sm mb-1">{model2RiskPercent !== null ? "%" : ""}</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <CheckCircle className="w-3 h-3 text-emerald-500" />
-              <span className="text-emerald-600 text-xs font-semibold">Normal (12–20)</span>
+              <CheckCircle className={`w-3 h-3 ${model2ColorClass}`} />
+              <span className={`${model2ColorClass} text-xs font-semibold`}>
+                {model2RiskPercent !== null ? `${model2Severity} LSTM SpO₂ deterioration` : "No Model 2 result yet"}
+              </span>
             </div>
             <div className="mt-2.5 w-full bg-slate-100 rounded-full h-1.5">
-              <div className="h-1.5 rounded-full bg-gradient-to-r from-sky-400 to-teal-400" style={{ width: `${breathingProgress}%` }} />
+              <div className={`h-1.5 rounded-full ${model2BarClass}`} style={{ width: `${model2Progress}%` }} />
             </div>
           </div>
 
@@ -839,15 +919,15 @@ export function PatientApp() {
           setSpo2TrendState(
             spo2Records.map((record: any, index: number) => ({
               t: index === spo2Records.length - 1 ? "Now" : formatTime(record.timestamp),
-              v: record.spo2 ?? record.value ?? 0,
+              v: record.modelSpo2 ?? record.spo2 ?? record.value ?? 0,
             })),
           );
 
           const rows = spo2Records.slice(-7).map((record: any) => ({
             date: new Date(record.timestamp).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
-            spo2: record.spo2 ?? 0,
-            hr: record.hr ?? 0,
-            status: (record.spo2 ?? 0) < 94 ? "warning" : "stable",
+            spo2: record.modelSpo2 ?? record.spo2 ?? 0,
+            hr: record.modelHeartRate ?? record.hr ?? 0,
+            status: (record.modelSpo2 ?? record.spo2 ?? 0) < 94 ? "warning" : "stable",
           }));
           setHistoryRowsState(rows);
         } else {
@@ -860,7 +940,7 @@ export function PatientApp() {
           setHrTrendState(
             hrRecords.map((record: any, index: number) => ({
               t: index === hrRecords.length - 1 ? "Now" : formatTime(record.timestamp),
-              v: record.hr ?? record.value ?? 0,
+              v: record.modelHeartRate ?? record.hr ?? record.value ?? 0,
             })),
           );
         } else {
@@ -984,15 +1064,15 @@ export function PatientApp() {
           setSpo2TrendState(
             spo2Records.map((record: any, index: number) => ({
               t: index === spo2Records.length - 1 ? "Now" : formatTime(record.timestamp),
-              v: record.spo2 ?? record.value ?? 0,
+              v: record.modelSpo2 ?? record.spo2 ?? record.value ?? 0,
             })),
           );
 
           const rows = spo2Records.slice(-7).map((record: any) => ({
             date: new Date(record.timestamp).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
-            spo2: record.spo2 ?? 0,
-            hr: record.hr ?? 0,
-            status: (record.spo2 ?? 0) < 94 ? "warning" : "stable",
+            spo2: record.modelSpo2 ?? record.spo2 ?? 0,
+            hr: record.modelHeartRate ?? record.hr ?? 0,
+            status: (record.modelSpo2 ?? record.spo2 ?? 0) < 94 ? "warning" : "stable",
           }));
           setHistoryRowsState(rows);
         }
@@ -1002,7 +1082,7 @@ export function PatientApp() {
           setHrTrendState(
             hrRecords.map((record: any, index: number) => ({
               t: index === hrRecords.length - 1 ? "Now" : formatTime(record.timestamp),
-              v: record.hr ?? record.value ?? 0,
+              v: record.modelHeartRate ?? record.hr ?? record.value ?? 0,
             })),
           );
         }

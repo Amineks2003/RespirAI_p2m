@@ -8,7 +8,8 @@
     "start": "node src/server.js",
     "seed": "node src/seed.js",
     "dedupe:doctor-ai-results": "node src/scripts/dedupeDoctorAiResultNotifications.js",
-    "dedupe:doctor-ai-results:apply": "node src/scripts/dedupeDoctorAiResultNotifications.js --apply"
+    "dedupe:doctor-ai-results:apply": "node src/scripts/dedupeDoctorAiResultNotifications.js --apply",
+    "backfill:model-inputs": "node src/scripts/backfillModelInputs.js"
   },
   "dependencies": {
     "@figma/my-make-file": "file:..",

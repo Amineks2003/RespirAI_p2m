@@ -11,9 +11,7 @@ const DEFAULT_INTAKE_FORM = {
   heart_rate: 80,
   respiratory_rate: 18,
   temperature: 37,
-  cough: false,
   shortness_of_breath: false,
-  wheezing: false,
   chest_pain: false,
   fatigue: false,
   asthma: false,
@@ -157,14 +155,6 @@ const normalizeSmokingStatus = (value) => {
 };
 
 const normalizeIntakeForm = ({ intakeForm = {}, latestVital = {}, latestEnvironment = {} } = {}) => {
-  const fallbackCoughEvents = firstNumber(
-    intakeForm?.cough_events_per_hour,
-    intakeForm?.coughEvents,
-    latestVital?.coughEvents,
-    latestVital?.cough_events_per_hour,
-    0,
-  );
-
   const respiratoryRate = clamp(
     firstNumber(
       intakeForm?.respiratory_rate,
@@ -218,21 +208,9 @@ const normalizeIntakeForm = ({ intakeForm = {}, latestVital = {}, latestEnvironm
       30,
       45,
     ),
-    cough: firstBoolean(
-      intakeForm?.cough,
-      fallbackCoughEvents !== null ? fallbackCoughEvents > 0 : null,
-      false,
-    ) ?? false,
     shortness_of_breath: firstBoolean(
       intakeForm?.shortness_of_breath,
       respiratoryRate >= 22,
-      false,
-    ) ?? false,
-    wheezing: firstBoolean(
-      intakeForm?.wheezing,
-      intakeForm?.wheeze_detected,
-      intakeForm?.wheezeDetected,
-      latestVital?.wheezeDetected,
       false,
     ) ?? false,
     chest_pain: firstBoolean(intakeForm?.chest_pain, false) ?? false,
@@ -292,15 +270,12 @@ const buildPhysiologySeries = ({ latestVital, history = [], normalizedIntake }) 
     0,
     10,
   );
-  const baseCoughEvents = normalizedIntake.cough ? 8 : 0;
 
   return trend.map((point) => ({
     spo2: Number(point.spo2 ?? normalizedIntake.spo2),
     rr: Number(point.rr ?? normalizedIntake.respiratory_rate),
     hr: Number(point.hr ?? normalizedIntake.heart_rate),
     apnea_level: Number(point.apneaLevel ?? point.apnea_level ?? baseApneaLevel),
-    cough_events_per_hour: Number(point.coughEvents ?? point.cough_events_per_hour ?? baseCoughEvents),
-    wheezing_detected: Boolean(point.wheezeDetected ?? point.wheezing_detected ?? normalizedIntake.wheezing),
     timestamp: point.timestamp || point.createdAt,
   }));
 };
@@ -308,7 +283,6 @@ const buildPhysiologySeries = ({ latestVital, history = [], normalizedIntake }) 
 const buildAiPayload = ({ patientId, latestVital, historyVitals, latestEnvironment, intakeForm }) => {
   const normalizedIntake = normalizeIntakeForm({ intakeForm, latestVital, latestEnvironment });
 
-  const coughEvents = normalizedIntake.cough ? Math.max(2, (normalizedIntake.shortness_of_breath ? 8 : 5)) : 0;
   const apneaLevel = clamp(
     (normalizedIntake.shortness_of_breath ? 4 : 1)
     + (normalizedIntake.fatigue ? 1 : 0)
@@ -332,8 +306,6 @@ const buildAiPayload = ({ patientId, latestVital, historyVitals, latestEnvironme
     spo2: normalizedIntake.spo2,
     rr: normalizedIntake.respiratory_rate,
     hr: normalizedIntake.heart_rate,
-    cough_events: coughEvents,
-    wheeze_detected: normalizedIntake.wheezing,
     apnea_level: apneaLevel,
     aqi: normalizedIntake.air_quality_index,
     temperature: normalizedIntake.environment_temperature,
@@ -343,11 +315,6 @@ const buildAiPayload = ({ patientId, latestVital, historyVitals, latestEnvironme
       spo2: normalizedIntake.spo2,
       respiration_rate: normalizedIntake.respiratory_rate,
       heart_rate: normalizedIntake.heart_rate,
-    },
-    audio: {
-      cough_frequency_per_hour: coughEvents,
-      wheezing_detected: normalizedIntake.wheezing,
-      wheezing_intensity: normalizedIntake.wheezing ? 0.68 : 0.12,
     },
     apnea: {
       respiration_rate: normalizedIntake.respiratory_rate,

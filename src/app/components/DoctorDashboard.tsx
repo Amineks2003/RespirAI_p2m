@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   Activity, Bell, LogOut, AlertTriangle,
-  TrendingUp, Thermometer, Wind, Brain, BookOpen,
-  CheckCircle2, XCircle, Mic, Heart, Stethoscope,
-  Clock, User, Calendar, Pill, Zap, Search,
+  TrendingUp, Wind, Brain, BookOpen,
+  CheckCircle2, XCircle, Heart, Stethoscope,
+  Clock, User, Calendar, Zap, Search,
   Download, RefreshCw, Phone, Mail, ChevronRight,
   ChevronDown, ChevronUp, Plus, Eye, Edit, FileText,
   BarChart2, MessageSquare, Users, LayoutDashboard,
@@ -65,7 +65,6 @@ const computeAdmissionHours = (admittedAt?: string) => {
 };
 
 const createManualIntakeForm = (_context: any = {}) => {
-
   return {
     apnea: {
       apn: null,
@@ -73,25 +72,8 @@ const createManualIntakeForm = (_context: any = {}) => {
       hea: null,
     },
     spo2: {
-      csv_file: null as File | null,
+      csv_file: null,
     },
-  };
-};
-
-const validateSpo2Form = (form: any) => {
-  const errors: Record<string, string> = {};
-  const file = form?.spo2?.csv_file;
-
-  if (!file) {
-    errors.csv_file = "Required.";
-  } else if (!String(file?.name || "").toLowerCase().endsWith(".csv")) {
-    errors.csv_file = "Expected .csv file.";
-  }
-
-  return {
-    isValid: Object.keys(errors).length === 0,
-    errors,
-    payload: file,
   };
 };
 
@@ -117,6 +99,23 @@ const validateApneaFiles = (form: any) => {
     payload: files,
   };
 };
+
+function validateSpo2Form(form: any) {
+  const errors: Record<string, string> = {};
+  const csvFile = form?.spo2?.csv_file;
+
+  if (!csvFile) {
+    errors.csv_file = "CSV file is required.";
+  } else if (!String(csvFile?.name || "").toLowerCase().endsWith(".csv")) {
+    errors.csv_file = "Expected .csv file.";
+  }
+
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+    payload: csvFile,
+  };
+}
 
 
 
@@ -164,6 +163,57 @@ const formatWithUnit2 = (value: unknown, unit: string) => {
   return formatted === "--" ? "--" : `${formatted} ${unit}`;
 };
 
+
+const toNumericDashboardValue = (value: unknown, fallback: number | null = null) => {
+  if (value === null || value === undefined || value === "") return fallback;
+  const parsed = typeof value === "number" ? value : Number(String(value).replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const normalizePercentValue = (value: unknown, fallback: number | null = null) => {
+  const parsed = toNumericDashboardValue(value, fallback);
+  if (parsed === null) return null;
+  return parsed <= 1 ? parsed * 100 : parsed;
+};
+
+const formatGenderLabel = (value: unknown) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "--";
+  if (["m", "male", "homme", "1"].includes(normalized)) return "Male";
+  if (["f", "female", "femme", "0"].includes(normalized)) return "Female";
+  if (normalized === "other") return "Other";
+  if (normalized === "prefer not to say") return "Prefer not to say";
+  return String(value);
+};
+
+const valueColorClass = (value: number | null) => {
+  if (value === null) return "text-slate-500";
+  if (value >= 75) return "text-red-600";
+  if (value >= 50) return "text-amber-600";
+  return "text-emerald-600";
+};
+
+const labelFromPercent = (value: number | null) => {
+  if (value === null) return "No result";
+  if (value >= 75) return "Critical";
+  if (value >= 50) return "Moderate";
+  return "Low";
+};
+
+const spo2ColorClass = (value: number | null) => {
+  if (value === null) return "text-slate-500";
+  if (value < 90) return "text-red-600";
+  if (value < 94) return "text-amber-600";
+  return "text-emerald-600";
+};
+
+const spo2Label = (value: number | null) => {
+  if (value === null) return "No CSV value";
+  if (value < 90) return "↓ Critical";
+  if (value < 94) return "↓ Low";
+  return "Stable";
+};
+
 const SpO2Tip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
   const v = payload[0].value;
@@ -199,15 +249,112 @@ function DashboardView({
     );
   }
 
-  const latestEnvironment = patientDetails?.latestEnvironment || {};
   const latestRisk = patientDetails?.latestRisk || {};
   const latestVital = patientDetails?.latestVital || {};
-  const medications = (patientDetails?.medications || []).slice(0, 2).map((medication: any) => medication.name).join(", ");
-  const patientGender = patientDetails?.profile?.gender || "--";
+  const modelOutputTrends = patientDetails?.modelOutputTrends || {};
+  const latestModel1 = modelOutputTrends?.model1?.latest || null;
+  const latestModel2 = modelOutputTrends?.model2?.latest || null;
+  const latestModel1Output = latestModel1?.output || latestVital?.modelInputs?.model1Apnea?.modelOutput || {};
+  const latestModel2Output = latestModel2?.output || latestVital?.modelInputs?.model2Spo2?.modelOutput || {};
+  const latestModel2Features = latestModel2?.features || latestVital?.modelInputs?.model2Spo2?.features || {};
+
+  const patientAge =
+    patientDetails?.age ??
+    modelOutputTrends?.patient?.age ??
+    p.age ??
+    toNumericDashboardValue(latestModel2Features?.age, null);
+
+  const patientGender = formatGenderLabel(
+    patientDetails?.gender ||
+      patientDetails?.profile?.gender ||
+      modelOutputTrends?.patient?.gender ||
+      p.gender ||
+      latestModel2Features?.gender ||
+      "--",
+  );
+
   const admittedAt = toDateLabel(patientDetails?.profile?.admittedAt);
   const riskScore = latestRisk?.score ?? p.risk;
-  const wheezeConfidence = latestVital?.wheezeDetected ? 82 : 18;
-  const coughFrequency = latestVital?.coughEvents ?? 0;
+  const aiModelData = patientDetails?.profile?.aiModelData || {};
+  const apneaSignals = aiModelData?.apneaSignals || {};
+  const spo2History = aiModelData?.spo2History || {};
+  const spo2Snapshot = Object.keys(latestModel2Features || {}).length ? latestModel2Features : (spo2History?.lastRow || {});
+
+  const currentSpo2Value = toNumericDashboardValue(
+    latestModel2?.spo2_pct ??
+      latestModel2Features?.spo2_pct ??
+      latestModel2Features?.spo2 ??
+      latestVital?.spo2 ??
+      p.spo2,
+    null,
+  );
+
+  const currentModel1Percent = normalizePercentValue(
+    latestModel1?.percent ?? latestModel1Output?.riskScore ?? latestModel1Output?.probability,
+    null,
+  );
+
+  const currentModel2Percent = normalizePercentValue(
+    latestModel2?.percent ??
+      latestModel2Output?.probabilityDeterioration ??
+      latestModel2Output?.riskScore,
+    null,
+  );
+
+  const apneaFiles = [
+    { key: "apn", label: ".apn", file: apneaSignals?.apn },
+    { key: "dat", label: ".dat", file: apneaSignals?.dat },
+    { key: "hea", label: ".hea", file: apneaSignals?.hea },
+  ];
+  const apneaFilesUploaded = apneaFiles.filter((item) => item.file?.name).length;
+  const apneaMissing = apneaFiles.filter((item) => !item.file?.name).map((item) => item.label);
+  const apneaStatus = apneaFilesUploaded ? `${apneaFilesUploaded}/3 files` : "No files";
+  const apneaHint = apneaMissing.length
+    ? `Missing ${apneaMissing.join(", ")}`
+    : apneaFilesUploaded
+      ? "Files ready"
+      : "Upload signal files";
+  const apneaUploadedAt = apneaSignals?.uploadedAt ? toDateLabel(apneaSignals.uploadedAt) : "--";
+
+  const spo2CsvName = spo2History?.csv?.name || "";
+  const spo2Status = spo2CsvName ? "CSV uploaded" : "No CSV";
+  const spo2Hint = spo2CsvName || "Upload history CSV";
+  const spo2UploadedAt = spo2History?.uploadedAt ? toDateLabel(spo2History.uploadedAt) : "--";
+  const hasSpo2Snapshot = Boolean(spo2CsvName || Object.keys(spo2Snapshot || {}).length > 0);
+
+  const formatSnapshotText = (value: unknown) => {
+    if (value === null || value === undefined || value === "") return "--";
+    return String(value);
+  };
+
+  const formatSnapshotValue = (value: unknown, unit?: string) => {
+    if (value === null || value === undefined || value === "") return "--";
+    const formatted = formatNumber2(value);
+    return formatted === "--" ? "--" : unit ? `${formatted} ${unit}` : formatted;
+  };
+
+  const formatSnapshotPercent = (value: unknown) => {
+    if (value === null || value === undefined || value === "") return "--";
+    return formatPercent2(value);
+  };
+
+  const snapshotSpo2Value = spo2Snapshot?.spo2 ?? spo2Snapshot?.spo2_pct;
+
+  const spo2SnapshotItems = [
+    { label: "patient_id", value: formatSnapshotText(spo2Snapshot?.patient_id || p.id) },
+    { label: "hour_from_admission", value: formatSnapshotValue(spo2Snapshot?.hour_from_admission, "h") },
+    { label: "age", value: formatSnapshotValue(spo2Snapshot?.age, "y") },
+    { label: "gender", value: formatSnapshotText(spo2Snapshot?.gender) },
+    { label: "comorbidity_index", value: formatSnapshotValue(spo2Snapshot?.comorbidity_index) },
+    { label: "heart_rate", value: formatSnapshotValue(spo2Snapshot?.heart_rate, "bpm") },
+    { label: "respiratory_rate", value: formatSnapshotValue(spo2Snapshot?.respiratory_rate, "br/min") },
+    { label: "spo2", value: formatSnapshotPercent(snapshotSpo2Value) },
+    { label: "systolic_bp", value: formatSnapshotValue(spo2Snapshot?.systolic_bp, "mmHg") },
+    { label: "diastolic_bp", value: formatSnapshotValue(spo2Snapshot?.diastolic_bp, "mmHg") },
+    { label: "mobility_score", value: formatSnapshotValue(spo2Snapshot?.mobility_score) },
+    { label: "lactate", value: formatSnapshotValue(spo2Snapshot?.lactate, "mmol/L") },
+    { label: "hemoglobin", value: formatSnapshotValue(spo2Snapshot?.hemoglobin, "g/dL") },
+  ];
 
   return (
     <div className="flex gap-5 h-full">
@@ -271,7 +418,7 @@ function DashboardView({
                   <h2 className="text-blue-900 font-black">{p.name}</h2>
                   <span className={`text-xs font-bold px-2.5 py-1 rounded-full border capitalize ${statusBadge(p.status)}`}>{p.status}</span>
                 </div>
-                <p className="text-slate-500 text-sm">{p.id} · Age {p.age ?? "--"}</p>
+                <p className="text-slate-500 text-sm">{p.id} · Age {patientAge ?? "--"}</p>
                 <div className="flex items-center gap-2 mt-2 flex-wrap">
                   <span className="bg-blue-100 text-blue-700 text-xs font-medium px-2 py-0.5 rounded-full">{p.condition}</span>
                   {riskScore >= 75 && <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-0.5 rounded-full">⚠ HIGH RISK</span>}
@@ -281,40 +428,45 @@ function DashboardView({
             <div className="flex gap-2" />
           </div>
 
-          {/* Patient info + Environmental context */}
-          <div className="grid grid-cols-4 gap-3">
-            {[
-              { icon: User, label: "Age / Sex", value: `${p.age || "--"} · ${patientGender}`, alert: false },
-              { icon: Calendar, label: "Admitted", value: admittedAt, alert: false },
-              { icon: Pill, label: "Medication", value: medications || "Not set", alert: false },
-              { icon: Heart, label: "Heart Rate", value: formatWithUnit2(latestVital?.hr ?? p.hr, "bpm"), alert: (latestVital?.hr ?? p.hr) > 100 },
-            ].map((item) => (
-              <div key={item.label} className={`rounded-xl p-3 ${item.alert ? "bg-red-50 border border-red-200" : "bg-slate-50 border border-slate-100"}`}>
-                <div className="flex items-center gap-1.5 mb-1">
-                  <item.icon className={`w-3.5 h-3.5 ${item.alert ? "text-red-500" : "text-slate-400"}`} />
-                  <span className="text-xs text-slate-500">{item.label}</span>
+          {/* Patient info + AI inputs */}
+          <div className="grid grid-cols-2 gap-3">
+            {[{
+              icon: User,
+              label: "Age / Sex",
+              value: `${patientAge ?? "--"} · ${patientGender}`,
+              alert: false,
+            }, {
+              icon: Calendar,
+              label: "Admitted",
+              value: admittedAt,
+              alert: false,
+            }, {
+              icon: Activity,
+              label: "Apnea Signals",
+              value: apneaStatus,
+              hint: `${apneaHint} · ${apneaUploadedAt}`,
+              alert: apneaFilesUploaded < 3,
+            }, {
+              icon: FileText,
+              label: "SpO₂ CSV",
+              value: spo2Status,
+              hint: `${spo2Hint} · ${spo2UploadedAt}`,
+              alert: !spo2CsvName,
+            }].map((item) => (
+              <div
+                key={item.label}
+                className={"rounded-xl border px-3 py-2 flex items-center gap-3 " + (item.alert ? "border-rose-200 bg-rose-50" : "border-slate-200 bg-white")}
+              >
+                <item.icon className={"w-4 h-4 " + (item.alert ? "text-rose-500" : "text-slate-500")} />
+                <div>
+                  <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wide">{item.label}</p>
+                  <p className="text-sm font-semibold text-slate-700">{item.value}</p>
+                  {item.hint ? (
+                    <p className="text-[11px] text-slate-400">{item.hint}</p>
+                  ) : null}
                 </div>
-                <p className={`text-sm font-bold ${item.alert ? "text-red-700" : "text-slate-700"}`}>{item.value}</p>
               </div>
             ))}
-          </div>
-
-          {/* Environmental widgets */}
-          <div className="mt-3 grid grid-cols-2 gap-3">
-            <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-center gap-2.5">
-              <Wind className="w-4 h-4 text-red-500 flex-shrink-0" />
-              <div>
-                <p className="text-xs text-slate-500">Local Air Pollution</p>
-                <p className="text-sm font-bold text-red-800">AQI {latestEnvironment?.aqi ?? 156} — {(latestEnvironment?.aqi ?? 156) > 150 ? "Unhealthy" : "Moderate"}</p>
-              </div>
-            </div>
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2.5">
-              <Thermometer className="w-4 h-4 text-amber-600 flex-shrink-0" />
-              <div>
-                <p className="text-xs text-slate-500">Room Temperature</p>
-                <p className="text-sm font-bold text-amber-800">{latestEnvironment?.temperature ?? 24.2}°C — Warm</p>
-              </div>
-            </div>
           </div>
         </div>
 
@@ -333,8 +485,8 @@ function DashboardView({
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-red-600 font-black text-lg">{formatPercent2(latestVital?.spo2 ?? p.spo2)}</p>
-                <p className="text-red-400 text-[10px]">↓ Critical</p>
+                <p className={`${spo2ColorClass(currentSpo2Value)} font-black text-lg`}>{currentSpo2Value === null ? "--" : `${currentSpo2Value.toFixed(2)}%`}</p>
+                <p className={`${spo2ColorClass(currentSpo2Value)} text-[10px]`}>{spo2Label(currentSpo2Value)}</p>
               </div>
             </div>
             <ResponsiveContainer width="100%" height={120}>
@@ -364,13 +516,13 @@ function DashboardView({
                   <Wind className="w-3.5 h-3.5 text-cyan-600" />
                 </div>
                 <div>
-                  <p className="text-blue-900 font-bold text-xs">Apnea Level</p>
-                  <p className="text-slate-400 text-[10px]">Sleep-breathing severity · 7h</p>
+                  <p className="text-blue-900 font-bold text-xs">Apnea — Model 1</p>
+                  <p className="text-slate-400 text-[10px]">CNN-BiLSTM result · latest run</p>
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-amber-600 font-black text-lg">{latestVital?.apneaLevel ?? 0}/10</p>
-                <p className="text-amber-400 text-[10px]">Severity scale</p>
+                <p className={`${valueColorClass(currentModel1Percent)} font-black text-lg`}>{currentModel1Percent === null ? "--" : `${currentModel1Percent.toFixed(2)}%`}</p>
+                <p className={`${valueColorClass(currentModel1Percent)} text-[10px]`}>{labelFromPercent(currentModel1Percent)}</p>
               </div>
             </div>
             <ResponsiveContainer width="100%" height={120}>
@@ -383,53 +535,44 @@ function DashboardView({
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
                 <XAxis dataKey="t" tick={{ fontSize: 8, fill: "#94A3B8" }} tickLine={false} axisLine={false} interval={4} />
-                <YAxis domain={[0, 10]} tick={{ fontSize: 8, fill: "#94A3B8" }} tickLine={false} axisLine={false} />
-                <Tooltip formatter={(v: any) => [`${Number(v).toFixed(1)}/10`, "Apnea"]} />
-                <ReferenceLine y={5} stroke="#94A3B8" strokeDasharray="3 3" strokeWidth={1.5} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 8, fill: "#94A3B8" }} tickLine={false} axisLine={false} />
+                <Tooltip formatter={(v: any) => [`${Number(v).toFixed(2)}%`, "Model 1 apnea result"]} />
+                <ReferenceLine y={50} stroke="#F59E0B" strokeDasharray="3 3" strokeWidth={1.5} />
+                <ReferenceLine y={75} stroke="#EF4444" strokeDasharray="3 3" strokeWidth={1.5} />
                 <Area type="monotone" dataKey="v" stroke="#06B6D4" strokeWidth={2} fill="url(#g2)" dot={false} activeDot={{ r: 3 }} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
 
-          {/* Audio Analysis */}
+          {/* LSTM SpO2 Snapshot */}
           <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center">
-                <Mic className="w-3.5 h-3.5 text-violet-600" />
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center">
+                <FileText className="w-3.5 h-3.5 text-emerald-600" />
               </div>
               <div>
-                <p className="text-blue-900 font-bold text-xs">Audio Analysis</p>
-                <p className="text-slate-400 text-[10px]">Acoustic sensor</p>
+                <p className="text-blue-900 font-bold text-xs">LSTM SpO₂ Snapshot</p>
+                <p className="text-slate-400 text-[10px]">Last CSV row stored</p>
               </div>
             </div>
-            <div className="space-y-2.5">
-              <div className="p-2.5 bg-red-50 border border-red-200 rounded-xl">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-semibold text-red-700">Wheezing</span>
-                  <span className="text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded-full font-bold">{latestVital?.wheezeDetected ? "DETECTED" : "LOW"}</span>
-                </div>
-                <div className="w-full bg-red-100 rounded-full h-1.5">
-                  <div className="bg-red-500 h-1.5 rounded-full" style={{ width: `${wheezeConfidence}%` }} />
-                </div>
-                <p className="text-[10px] text-red-500 mt-1">Confidence: {wheezeConfidence}%</p>
-              </div>
-              <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-semibold text-amber-700">Cough Freq.</span>
-                  <span className="text-[10px] bg-amber-500 text-white px-1.5 py-0.5 rounded-full font-bold">ELEVATED</span>
-                </div>
-                <div className="w-full bg-amber-100 rounded-full h-1.5">
-                  <div className="bg-amber-500 h-1.5 rounded-full" style={{ width: `${Math.min(100, coughFrequency * 5)}%` }} />
-                </div>
-                <p className="text-[10px] text-amber-600 mt-1">{coughFrequency} events/hr</p>
-              </div>
+            <div className="flex items-center justify-between text-[11px] text-slate-500 mb-2">
+              <span className="font-semibold">{spo2CsvName || "No CSV uploaded"}</span>
+              <span>{spo2UploadedAt}</span>
             </div>
-            {/* Waveform */}
-            <div className="mt-3 bg-slate-900 rounded-xl p-2.5 flex items-center gap-0.5 overflow-hidden">
-              {[6,10,16,8,22,6,28,12,20,6,16,26,8,18,6,12,24,8,16,10,22,6,14,28,8,20,6,16,12,24,6,10].map((h, i) => (
-                <div key={i} className="flex-1 bg-violet-400 rounded-full opacity-80" style={{ height: `${h}px` }} />
-              ))}
-            </div>
+            {hasSpo2Snapshot ? (
+              <div className="grid grid-cols-2 gap-2">
+                {spo2SnapshotItems.map((item) => (
+                  <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                    <p className="text-[10px] text-slate-400 font-mono">{item.label}</p>
+                    <p className="text-xs font-semibold text-slate-700">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                No CSV snapshot stored for this patient yet.
+              </div>
+            )}
           </div>
         </div>
 
@@ -437,8 +580,8 @@ function DashboardView({
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
             <div className="flex items-center gap-2 mb-3">
               <TrendingUp className="w-4 h-4 text-red-500" />
-              <p className="text-blue-900 font-bold text-sm">Risk Score Trend</p>
-              <span className="ml-auto text-xs bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full">{riskScore}% ↑</span>
+              <p className="text-blue-900 font-bold text-sm">Model 2 Deterioration Trend</p>
+              <span className="ml-auto text-xs bg-emerald-100 text-emerald-700 font-bold px-2 py-0.5 rounded-full">{currentModel2Percent === null ? "--" : `${currentModel2Percent.toFixed(2)}%`}</span>
             </div>
             <ResponsiveContainer width="100%" height={140}>
               <AreaChart data={riskSeries} margin={{ top: 5, right: 2, left: -28, bottom: 0 }}>
@@ -451,7 +594,7 @@ function DashboardView({
                 <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
                 <XAxis dataKey="t" tick={{ fontSize: 8, fill: "#94A3B8" }} tickLine={false} axisLine={false} interval={1} />
                 <YAxis domain={[0, 100]} tick={{ fontSize: 8, fill: "#94A3B8" }} tickLine={false} axisLine={false} />
-                <Tooltip formatter={(v: any) => [`${v}%`, "Risk"]} />
+                <Tooltip formatter={(v: any) => [`${Number(v).toFixed(2)}%`, "Model 2 deterioration"]} />
                 <ReferenceLine y={75} stroke="#F59E0B" strokeDasharray="3 3" strokeWidth={1.5} />
                 <Area type="monotone" dataKey="r" stroke="#EF4444" strokeWidth={2.5} fill="url(#rg)" dot={false} activeDot={{ r: 4 }} />
               </AreaChart>
@@ -1734,25 +1877,31 @@ export function DoctorDashboard() {
   const loadSelectedPatientContext = async (patientIdentifier: string) => {
     const encodedPatientIdentifier = encodeURIComponent(patientIdentifier);
 
-    const [patientPayload, vitalsPayload, risksPayload, insightsPayload] = await Promise.all([
+    const [patientPayload, vitalsPayload, risksPayload, insightsPayload, modelOutputsPayload] = await Promise.all([
       apiRequest<any>(`/doctor/patients/${encodedPatientIdentifier}`, { auth: true }),
-      apiRequest<any>(`/doctor/patients/${encodedPatientIdentifier}/vitals?limit=24`, { auth: true }),
-      apiRequest<any>(`/doctor/patients/${encodedPatientIdentifier}/risk-history?limit=24`, { auth: true }),
+      apiRequest<any>(`/doctor/patients/${encodedPatientIdentifier}/vitals?limit=48`, { auth: true }),
+      apiRequest<any>(`/doctor/patients/${encodedPatientIdentifier}/risk-history?limit=48`, { auth: true }),
       apiRequest<any>(`/doctor/patients/${encodedPatientIdentifier}/ai-insights`, { auth: true }),
+      apiRequest<any>(`/doctor/patients/${encodedPatientIdentifier}/model-output-trends?limit=48`, { auth: true }),
     ]);
 
-    setSelectedPatientDetails(patientPayload?.patient || null);
+    setSelectedPatientDetails({
+      ...(patientPayload?.patient || {}),
+      modelOutputTrends: modelOutputsPayload || {},
+      age: patientPayload?.patient?.age ?? modelOutputsPayload?.patient?.age ?? null,
+      gender: patientPayload?.patient?.gender ?? modelOutputsPayload?.patient?.gender ?? "",
+    });
 
-    const mappedSpo2 = (vitalsPayload?.trend || [])
-      .map((point: any) => ({ t: toTimeLabel(point?.timestamp), v: point?.spo2 }))
+    const mappedSpo2 = (modelOutputsPayload?.model2?.spo2Trend || [])
+      .map((point: any) => ({ t: toTimeLabel(point?.timestamp), v: toNumericDashboardValue(point?.spo2_pct, null) }))
       .filter((point: any) => typeof point.v === "number");
 
-    const mappedApnea = (vitalsPayload?.trend || [])
-      .map((point: any) => ({ t: toTimeLabel(point?.timestamp), v: point?.apneaLevel }))
+    const mappedApnea = (modelOutputsPayload?.model1?.trend || [])
+      .map((point: any) => ({ t: toTimeLabel(point?.timestamp), v: normalizePercentValue(point?.percent, null) }))
       .filter((point: any) => typeof point.v === "number");
 
-    const mappedRisk = (risksPayload?.trend || [])
-      .map((point: any) => ({ t: toTimeLabel(point?.createdAt), r: point?.score ?? 0 }))
+    const mappedRisk = (modelOutputsPayload?.model2?.riskTrend || [])
+      .map((point: any) => ({ t: toTimeLabel(point?.timestamp), r: normalizePercentValue(point?.percent, null) }))
       .filter((point: any) => typeof point.r === "number");
 
     setSpo2Series(mappedSpo2);

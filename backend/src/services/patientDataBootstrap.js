@@ -18,18 +18,18 @@ const hashString = (value) => {
 
 const getStatusDefaults = (status) => {
   if (status === "critical") {
-    return { spo2: 87, hr: 104, rr: 24, apneaLevel: 8, coughEvents: 17, risk: 86, aqi: 162, temperature: 25.2, humidity: 71 };
+    return { spo2: 87, hr: 104, rr: 24, apneaLevel: 8, risk: 86, aqi: 162, temperature: 25.2, humidity: 71 };
   }
 
   if (status === "warning") {
-    return { spo2: 92, hr: 92, rr: 20, apneaLevel: 6, coughEvents: 11, risk: 64, aqi: 138, temperature: 23.6, humidity: 66 };
+    return { spo2: 92, hr: 92, rr: 20, apneaLevel: 6, risk: 64, aqi: 138, temperature: 23.6, humidity: 66 };
   }
 
   if (status === "moderate") {
-    return { spo2: 95, hr: 80, rr: 17, apneaLevel: 3, coughEvents: 6, risk: 43, aqi: 114, temperature: 22.6, humidity: 60 };
+    return { spo2: 95, hr: 80, rr: 17, apneaLevel: 3, risk: 43, aqi: 114, temperature: 22.6, humidity: 60 };
   }
 
-  return { spo2: 98, hr: 70, rr: 14, apneaLevel: 1, coughEvents: 3, risk: 22, aqi: 82, temperature: 21.5, humidity: 55 };
+  return { spo2: 98, hr: 70, rr: 14, apneaLevel: 1, risk: 22, aqi: 82, temperature: 21.5, humidity: 55 };
 };
 
 const getMedicationTemplate = (seed) => {
@@ -71,8 +71,6 @@ const buildVitalRecords = (patientId, defaults, seed) => {
       hr: clamp(defaults.hr + ((index + seed) % 5) - 2 + ((seed % 9) - 4), 52, 145),
       rr: clamp(defaults.rr + ((index + seed) % 4) - 1 + ((seed % 5) - 2), 10, 40),
       apneaLevel: Number(clamp(defaults.apneaLevel + apneaShift + (defaults.risk >= 80 ? 1 : 0), 0, 10).toFixed(1)),
-      coughEvents: clamp(defaults.coughEvents + ((index + seed) % 5) - 2, 0, 40),
-      wheezeDetected: defaults.risk >= 55 ? true : ((index + seed) % 5 === 0),
       source: "wearable",
       timestamp: hoursAgo(24 - index),
     };
@@ -105,6 +103,7 @@ const buildRiskHistory = (patientId, defaults, seed) => {
 
     const score = clamp(defaults.risk - 6 + trend + ((index + seed) % 4), 5, 99);
     const spo2Estimate = clamp(Math.round(defaults.spo2 - (9 - index) * 0.4), 82, 100);
+    const apneaEstimate = Number(clamp(defaults.apneaLevel + (index % 3) - 1, 0, 10).toFixed(1));
 
     return {
       patient: patientId,
@@ -119,9 +118,9 @@ const buildRiskHistory = (patientId, defaults, seed) => {
           severity: score > 75 ? "critical" : score > 55 ? "high" : "moderate",
         },
         {
-          key: "cough",
-          label: "Cough Frequency",
-          value: `${clamp(defaults.coughEvents + Math.floor(index / 2), 1, 28)} events/hr`,
+          key: "apnea",
+          label: "Apnea Level",
+          value: `${apneaEstimate}/10`,
           severity: score > 70 ? "high" : "moderate",
         },
         {
@@ -148,16 +147,11 @@ const buildLiveVitalRecord = ({ patientId, latestVital, defaults, seed, status }
   const previousHr = Number(latestVital?.hr ?? defaults.hr);
   const previousRr = Number(latestVital?.rr ?? defaults.rr);
   const previousApnea = Number(latestVital?.apneaLevel ?? defaults.apneaLevel);
-  const previousCough = Number(latestVital?.coughEvents ?? defaults.coughEvents);
 
   const spo2 = clamp(previousSpo2 + oscillation * 0.35 + statusBias, 82, 100);
   const hr = clamp(previousHr + oscillation * 1.1 + (status === "critical" ? 1.4 : 0.4), 52, 145);
   const rr = clamp(previousRr + oscillation * 0.5 + (status === "critical" ? 0.8 : 0.2), 10, 40);
   const apneaLevel = Number(clamp(previousApnea + oscillation * 0.12 + (status === "critical" ? 0.2 : 0), 0, 10).toFixed(1));
-  const coughEvents = Math.round(clamp(previousCough + oscillation * 0.8 + (status === "critical" ? 1.1 : 0), 0, 40));
-  const wheezeDetected = status === "critical" || status === "warning"
-    ? coughEvents >= 8 || oscillation > 0
-    : coughEvents >= 12 && oscillation > 1;
 
   return {
     patient: patientId,
@@ -165,10 +159,13 @@ const buildLiveVitalRecord = ({ patientId, latestVital, defaults, seed, status }
     hr,
     rr,
     apneaLevel,
-    coughEvents,
-    wheezeDetected,
+    coughEvents: Number(latestVital?.coughEvents ?? 0),
+    wheezeDetected: Boolean(latestVital?.wheezeDetected ?? false),
     source: "simulation-live",
     timestamp: new Date(),
+    // Keep the latest AI model input snapshot attached to the newest vital record.
+    // Without this, the dashboard would lose Model 1 / Model 2 context after live refresh.
+    modelInputs: latestVital?.modelInputs || {},
   };
 };
 
