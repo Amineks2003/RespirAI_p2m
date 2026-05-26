@@ -11,9 +11,7 @@ __pycache__/
 *.ckpt
 
 # Local datasets (kept on disk, not versioned)
-models/
 test/
-ai-service/models/*.pkl
 
 # Node
 node_modules/

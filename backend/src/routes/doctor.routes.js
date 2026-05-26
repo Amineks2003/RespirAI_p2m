@@ -19,6 +19,7 @@ import { ChatMessage } from "../models/ChatMessage.js";
 import { resolvePatientByIdentifier } from "../services/patientResolver.js";
 import { ensurePatientClinicalData } from "../services/patientDataBootstrap.js";
 import { buildCompositeAiInsight, buildManualAiInsights, generateExplainableInsight } from "../services/aiEngine.js";
+import { streamAiInsightPdf } from "../services/aiReportPdf.js";
 import { fetchGuidelinesFromAiService, runManualAiFromAiService, runSpo2CsvFromAiService } from "../services/aiGateway.js";
 import { generatePatientCode } from "../services/identity.js";
 import { getDefaultPatientFormData, validatePatientFormPayload } from "../services/patientFormSchema.js";
@@ -322,6 +323,11 @@ const recordModelInputsAsVitalRecord = async ({
 
   if (!Object.keys(modelInputs).length) return null;
 
+  // Preserve any existing modelInputs when creating a new VitalRecord so
+  // running a second model doesn't remove results from the first model.
+  const existingLatestVital = await fetchLatestVital(profile.user._id).catch(() => null);
+  const mergedModelInputs = { ...(existingLatestVital?.modelInputs || {}), ...modelInputs };
+
   return VitalRecord.create({
     patient: profile.user._id,
     timestamp: new Date(),
@@ -336,7 +342,7 @@ const recordModelInputsAsVitalRecord = async ({
     aqi: toFiniteNumberOrNull(latestEnvironmentPayload?.aqi),
     roomTemperature: toFiniteNumberOrNull(latestEnvironmentPayload?.temperature),
     humidity: toFiniteNumberOrNull(latestEnvironmentPayload?.humidity),
-    modelInputs,
+    modelInputs: mergedModelInputs,
   });
 };
 
@@ -1472,6 +1478,33 @@ doctorRouter.post(
         confidence: sentConfidence,
         sentAt,
       },
+    });
+  }),
+);
+
+doctorRouter.get(
+  "/patients/:patientIdentifier/ai-insights/pdf",
+  asyncHandler(async (req, res) => {
+    const profile = await resolvePatientByIdentifier(req.params.patientIdentifier);
+    ensureAccess(req.user.userId, profile);
+    await ensurePatientClinicalData(profile);
+
+    const latestRisk = await fetchLatestRisk(profile.user._id);
+    const insightsPayload = profile.latestAiInsights
+      ? formatAiInsight(profile.latestAiInsights)
+      : buildFallbackInsightFromRisk(latestRisk);
+
+    if (!insightsPayload) {
+      throw new HttpError(404, "No AI insights available for this patient.");
+    }
+
+    streamAiInsightPdf({
+      res,
+      profile,
+      insight: insightsPayload,
+      doctorInput: profile.latestDoctorAiInput || insightsPayload?.doctorInput || null,
+      sentResult: profile.latestDoctorSentResult || null,
+      fileNameSuffix: "ai-insight-report",
     });
   }),
 );

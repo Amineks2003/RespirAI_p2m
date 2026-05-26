@@ -3,10 +3,12 @@ import {
   Brain,
   CalendarClock,
   Database,
+  Download,
   HeartPulse,
   Loader2,
 } from "lucide-react";
-import { apiRequest } from "../lib/api";
+import { API_BASE_URL, apiRequest } from "../lib/api";
+import { getToken } from "../lib/session";
 
 type FieldItem = {
   key: string;
@@ -64,6 +66,8 @@ export function PatientDoctorAiData() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [doctorAiData, setDoctorAiData] = useState<any>(null);
+  const [isDownloadingReport, setIsDownloadingReport] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -99,6 +103,51 @@ export function PatientDoctorAiData() {
   const patientId = getFirstValue(input.patient_id, inputSnapshot.patientId, doctorAiData?.patientId);
   const modelUsed = getFirstValue(inputSnapshot?.model, sentResult?.model, insights?.model);
   const analysisDate = getFirstValue(inputSnapshot?.usedAt, doctorAiData?.updatedAt, sentResult?.sentAt);
+
+  const canDownloadReport = Boolean(sentResult?.sentAt || sentResult?.score || sentResult?.confidence);
+
+  const handleDownloadReport = async () => {
+    if (isDownloadingReport || !canDownloadReport) return;
+
+    const token = getToken();
+    if (!token) {
+      setDownloadError("Session expired. Please sign in again.");
+      return;
+    }
+
+    setDownloadError("");
+    setIsDownloadingReport(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/patient/me/doctor-ai-report/pdf`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Unable to download the AI report PDF.");
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      const safeName = `${patientId || "patient"}`
+        .replace(/[^a-z0-9\-_. ]/gi, "")
+        .trim()
+        || "patient";
+      link.download = `${safeName}-ai-report.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err: any) {
+      setDownloadError(err?.message || "Unable to download the AI report.");
+    } finally {
+      setIsDownloadingReport(false);
+    }
+  };
 
   const fields: FieldItem[] = [
     { key: "patient_id", label: "patient_id", value: patientId },
@@ -159,10 +208,23 @@ export function PatientDoctorAiData() {
             </p>
           </div>
 
-          <div className={`border rounded-2xl px-4 py-3 ${riskBadge(score)}`}>
-            <p className="text-[11px] font-bold uppercase tracking-wide">Shared AI risk</p>
-            <p className={`text-2xl font-black ${riskColor(score)}`}>{Number.isFinite(score) ? score.toFixed(1) : "0.0"}%</p>
-            <p className="text-[11px]">Confidence {Number.isFinite(confidence) ? confidence.toFixed(0) : "--"}%</p>
+          <div className="flex flex-col items-end gap-2">
+            <div className={`border rounded-2xl px-4 py-3 ${riskBadge(score)}`}>
+              <p className="text-[11px] font-bold uppercase tracking-wide">Shared AI risk</p>
+              <p className={`text-2xl font-black ${riskColor(score)}`}>{Number.isFinite(score) ? score.toFixed(1) : "0.0"}%</p>
+              <p className="text-[11px]">Confidence {Number.isFinite(confidence) ? confidence.toFixed(0) : "--"}%</p>
+            </div>
+            <button
+              onClick={handleDownloadReport}
+              disabled={!canDownloadReport || isDownloadingReport}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 ${!canDownloadReport || isDownloadingReport ? "bg-slate-100 text-slate-300 cursor-not-allowed" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+            >
+              <Download className="w-3.5 h-3.5" />
+              {isDownloadingReport ? "Downloading..." : "Download AI Report PDF"}
+            </button>
+            {downloadError && (
+              <p className="text-[11px] text-red-600">{downloadError}</p>
+            )}
           </div>
         </div>
 

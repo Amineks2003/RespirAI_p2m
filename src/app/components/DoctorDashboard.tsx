@@ -687,6 +687,27 @@ function PatientsView({ patients, onAddPatient, isAddingPatient }: any) {
     }
   };
 
+  const getModelReport = (output: any, emptyLabel: string) => {
+    if (!output) {
+      return { title: "No report", detail: emptyLabel };
+    }
+
+    const scoreText = formatPercent2(
+      output.riskScore ??
+        output.probabilityDeterioration ??
+        output.score ??
+        output.probability,
+    );
+    const status = output.status || output.riskLabel || output.apneaLabel || output.prediction || "";
+    const details = output.details || "";
+    const confidence = output.confidence ?? null;
+    const titleParts = [scoreText !== "--" ? scoreText : "", status].filter(Boolean);
+    const title = titleParts.length ? titleParts.join(" · ") : "Report ready";
+    const detail = details || (confidence !== null ? `Confidence ${formatPercent2(confidence)}` : emptyLabel);
+
+    return { title, detail };
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -727,60 +748,83 @@ function PatientsView({ patients, onAddPatient, isAddingPatient }: any) {
         <div className="overflow-hidden rounded-xl border border-slate-200">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>{["Patient", "Condition", "SpO₂", "HR", "AI Risk", "Status"].map(h => (
+              <tr>{["Patient", "Condition", "SpO₂", "HR", "Model 1 Report", "Model 2 Report", "AI Risk", "Status"].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wide">{h}</th>
               ))}</tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.map((pt: any) => (
-                <>
-                  <tr key={pt.id} className="hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => setExpanded(expanded === pt.id ? null : pt.id)}>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0 ${riskBg(pt.risk)}`}>
-                          {pt.name.split(" ").map((n: string) => n[0]).join("")}
-                        </div>
-                        <div>
-                          <p className="font-semibold text-slate-800">{pt.name}</p>
-                          <p className="text-xs text-slate-400">{pt.id}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-600 max-w-[130px] truncate">{pt.condition}</td>
-                    <td className="px-4 py-3 font-bold text-sm" style={{ color: pt.spo2 < 90 ? "#DC2626" : pt.spo2 < 94 ? "#D97706" : "#059669" }}>{formatPercent2(pt.spo2)}</td>
-                    <td className="px-4 py-3 text-sm font-semibold text-slate-700">{formatWithUnit2(pt.hr, "bpm")}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-14 bg-slate-100 rounded-full h-1.5">
-                          <div className={`h-1.5 rounded-full ${riskBg(pt.risk)}`} style={{ width: `${pt.risk}%` }} />
-                        </div>
-                        <span className={`text-xs font-bold ${riskColor(pt.risk)}`}>{pt.risk}%</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full border capitalize ${statusBadge(pt.status)}`}>{pt.status}</span></td>
-                  </tr>
-                  {expanded === pt.id && (
-                    <tr key={`${pt.id}-exp`} className="bg-blue-50/30">
-                      <td colSpan={6} className="px-4 py-4">
-                        <div className="grid grid-cols-3 gap-3">
-                          {[
-                            { l: "HR (heart rate)", v: formatWithUnit2(pt.hr, "bpm") },
-                            { l: "Status", v: pt.status },
-                            { l: "Condition", v: pt.condition },
-                          ].map(i => (
-                            <div key={i.l} className="bg-white rounded-xl p-3 border border-slate-200">
-                              <p className="text-xs text-slate-400">{i.l}</p>
-                              <p className="text-sm font-bold text-slate-800 mt-0.5">{i.v}</p>
-                            </div>
-                          ))}
+              {filtered.map((pt: any) => {
+                const model1Report = getModelReport(
+                  pt.vitals?.modelInputs?.model1Apnea?.modelOutput,
+                  "Run AI Insights for Model 1.",
+                );
+                const model2Report = getModelReport(
+                  pt.vitals?.modelInputs?.model2Spo2?.modelOutput,
+                  "Run AI Insights for Model 2.",
+                );
+
+                return (
+                  <>
+                    <tr key={pt.id} className="hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => setExpanded(expanded === pt.id ? null : pt.id)}>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0 ${riskBg(pt.risk)}`}>
+                            {pt.name.split(" ").map((n: string) => n[0]).join("")}
+                          </div>
+                          <div>
+                            <p className="font-semibold text-slate-800">{pt.name}</p>
+                            <p className="text-xs text-slate-400">{pt.id}</p>
+                          </div>
                         </div>
                       </td>
+                      <td className="px-4 py-3 text-xs text-slate-600 max-w-[130px] truncate">{pt.condition}</td>
+                      <td className="px-4 py-3 font-bold text-sm" style={{ color: pt.spo2 < 90 ? "#DC2626" : pt.spo2 < 94 ? "#D97706" : "#059669" }}>{formatPercent2(pt.spo2)}</td>
+                      <td className="px-4 py-3 text-sm font-semibold text-slate-700">{formatWithUnit2(pt.hr, "bpm")}</td>
+                      <td className="px-4 py-3">
+                        <div className="min-w-[170px]">
+                          <p className="text-xs font-semibold text-slate-700">{model1Report.title}</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">{model1Report.detail}</p>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="min-w-[170px]">
+                          <p className="text-xs font-semibold text-slate-700">{model2Report.title}</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">{model2Report.detail}</p>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-14 bg-slate-100 rounded-full h-1.5">
+                            <div className={`h-1.5 rounded-full ${riskBg(pt.risk)}`} style={{ width: `${pt.risk}%` }} />
+                          </div>
+                          <span className={`text-xs font-bold ${riskColor(pt.risk)}`}>{pt.risk}%</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full border capitalize ${statusBadge(pt.status)}`}>{pt.status}</span></td>
                     </tr>
-                  )}
-                </>
-              ))}
+                    {expanded === pt.id && (
+                      <tr key={`${pt.id}-exp`} className="bg-blue-50/30">
+                        <td colSpan={8} className="px-4 py-4">
+                          <div className="grid grid-cols-3 gap-3">
+                            {[
+                              { l: "HR (heart rate)", v: formatWithUnit2(pt.hr, "bpm") },
+                              { l: "Status", v: pt.status },
+                              { l: "Condition", v: pt.condition },
+                            ].map(i => (
+                              <div key={i.l} className="bg-white rounded-xl p-3 border border-slate-200">
+                                <p className="text-xs text-slate-400">{i.l}</p>
+                                <p className="text-sm font-bold text-slate-800 mt-0.5">{i.v}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                );
+              })}
               {!filtered.length && (
-                <tr><td colSpan={6} className="text-center py-10 text-slate-400 text-sm">No patients found.</td></tr>
+                <tr><td colSpan={8} className="text-center py-10 text-slate-400 text-sm">No patients found.</td></tr>
               )}
             </tbody>
           </table>
@@ -946,8 +990,10 @@ function AIInsightsView({
   aiInsights,
   onRunManualInsights,
   onSendResultsToPatient,
+  onDownloadAiReport,
   runningManualInsights,
   sendingResults,
+  isDownloadingAiReport,
 }: any) {
   const [manualForm, setManualForm] = useState<any>(() => createManualIntakeForm());
   const [manualFormErrors, setManualFormErrors] = useState<Record<string, Record<string, string>>>(EMPTY_MANUAL_ERRORS);
@@ -1029,6 +1075,7 @@ function AIInsightsView({
   const latestRisk = aiInsights || patientDetails?.latestRisk;
   const latestVital = patientDetails?.latestVital;
   const latestEnvironment = patientDetails?.latestEnvironment;
+  const canDownloadAiReport = Boolean(selectedPatient?.id && latestRisk);
   const modelOutputs = aiInsights?.modelOutputs ? Object.values(aiInsights.modelOutputs) : [];
   const ragSources = aiInsights?.rag?.sources || [];
   const ragExplanation =
@@ -1272,6 +1319,14 @@ function AIInsightsView({
             className={`px-4 py-2.5 rounded-xl text-sm font-semibold ${sendingResults ? "bg-emerald-400 text-white cursor-not-allowed" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}
           >
             {sendingResults ? "Sending..." : "Send Result To Patient"}
+          </button>
+          <button
+            onClick={onDownloadAiReport}
+            disabled={isDownloadingAiReport || !canDownloadAiReport}
+            className={`px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 ${isDownloadingAiReport || !canDownloadAiReport ? "bg-slate-100 text-slate-300 cursor-not-allowed" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+          >
+            <Download className="w-4 h-4" />
+            {isDownloadingAiReport ? "Downloading..." : "Download AI Report PDF"}
           </button>
         </div>
       </div>
@@ -1842,6 +1897,7 @@ export function DoctorDashboard() {
   const [activeReportDetails, setActiveReportDetails] = useState<any>(null);
   const [isLoadingReportDetails, setIsLoadingReportDetails] = useState(false);
   const [isDownloadingReport, setIsDownloadingReport] = useState(false);
+  const [isDownloadingAiReport, setIsDownloadingAiReport] = useState(false);
   const [analyticsMetrics, setAnalyticsMetrics] = useState({ totalAlerts: 0, criticalEvents: 0, resolved: 0, avgResponseMinutes: null as number | null });
   const [aiInsights, setAiInsights] = useState<any>(null);
   const [runningManualInsights, setRunningManualInsights] = useState<Record<string, boolean>>(() => ({
@@ -1939,6 +1995,7 @@ export function DoctorDashboard() {
           hr: patient?.vitals?.hr ?? null,
           rr: patient?.vitals?.rr ?? null,
           last: toTimeLabel(patient?.vitals?.timestamp),
+          vitals: patient?.vitals || null,
           latestUploadAt: patient?.latestUploadAt || null,
           latestUploadName: patient?.latestUploadName || "",
           color: score >= 75 ? "red" : score >= 50 ? "amber" : score >= 30 ? "orange" : "emerald",
@@ -2186,6 +2243,46 @@ export function DoctorDashboard() {
     }
   };
 
+  const handleDownloadAiInsightReport = async () => {
+    if (!selectedPatient?.id || isDownloadingAiReport) return;
+
+    const token = getToken();
+    if (!token) return;
+
+    setIsDownloadingAiReport(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/doctor/patients/${encodeURIComponent(selectedPatient.id)}/ai-insights/pdf`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Unable to download AI insight report PDF.");
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      const safeName = `${selectedPatient?.name || selectedPatient?.id || "patient"}`
+        .replace(/[^a-z0-9\-_. ]/gi, "")
+        .trim()
+        || "patient";
+      link.download = `${safeName}-ai-insight-report.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to download AI insight report.";
+      setDataError(message);
+    } finally {
+      setIsDownloadingAiReport(false);
+    }
+  };
+
   const handleAddConsultationNote = async (consultationId: string | number, text: string) => {
     if (actionLoading.consultationNote) return;
 
@@ -2327,8 +2424,10 @@ export function DoctorDashboard() {
           aiInsights={aiInsights}
           onRunManualInsights={handleRunManualInsights}
           onSendResultsToPatient={handleSendResultsToPatient}
+          onDownloadAiReport={handleDownloadAiInsightReport}
           runningManualInsights={runningManualInsights}
           sendingResults={sendingResults}
+          isDownloadingAiReport={isDownloadingAiReport}
         />
       );
       case "Patient Chat": return (

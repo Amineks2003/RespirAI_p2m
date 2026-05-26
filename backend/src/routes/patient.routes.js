@@ -15,6 +15,7 @@ import { Consultation } from "../models/Consultation.js";
 import { buildAiInsight } from "../services/aiEngine.js";
 import { validatePatientFormPayload } from "../services/patientFormSchema.js";
 import { ensurePatientClinicalData } from "../services/patientDataBootstrap.js";
+import { streamAiInsightPdf } from "../services/aiReportPdf.js";
 
 export const patientRouter = express.Router();
 
@@ -237,6 +238,28 @@ patientRouter.get(
         latestRisk,
         medications,
       }),
+    });
+  }),
+);
+
+patientRouter.get(
+  "/me/doctor-ai-report/pdf",
+  asyncHandler(async (req, res) => {
+    const profile = await ensureCurrentPatientData(req.user.userId);
+    const sentResult = profile.latestDoctorSentResult || null;
+    const insight = sentResult?.insights || null;
+
+    if (!insight) {
+      throw new HttpError(404, "No doctor AI report has been shared yet.");
+    }
+
+    streamAiInsightPdf({
+      res,
+      profile,
+      insight,
+      doctorInput: sentResult?.doctorInput || insight?.doctorInput || profile.latestDoctorAiInput || null,
+      sentResult,
+      fileNameSuffix: "doctor-ai-report",
     });
   }),
 );
