@@ -76,9 +76,15 @@ npm install
 Installer les dependances AI:
 
 ```powershell
+
 cd ai-service
-..\.venv\Scripts\python.exe -m pip install -r requirements.txt
+python -m venv .venv
+.\.venv\Scripts\Activate
+pip install -r requirements.txt
+
 ```
+**** REMARQUE ****
+Si python n'est pas reconnue, installe la à partir de ce lien https://www.python.org/downloads/
 
 ## 5) Configuration (.env)
 
@@ -91,25 +97,13 @@ Template complet (a copier en local):
 ```env
 
 PORT=4000
-MONGODB_URI=your_mongodb_uri_here
+MONGODB_URI=your_mongodb_uri
 JWT_SECRET=your_secret
 JWT_EXPIRES_IN=7d
 FRONTEND_ORIGIN=http://localhost:5173
 AI_SERVICE_URL=http://127.0.0.1:8100
 AI_SERVICE_TIMEOUT_MS=4000
 
-```
-
-### AI service (ai-service/.env)
-
-Template principal:
-
-```env
-
-RAG_ENABLE_WEB_SEARCH=1
-RAG_FORCE_WEB_SEARCH=0
-RAG_WEB_MAX_RESULTS=4
-TAVILY_API_KEY=your_api_key_here
 ```
 
 ### Frontend (optionnel)
