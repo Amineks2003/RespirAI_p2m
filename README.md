@@ -86,31 +86,7 @@ pip install -r requirements.txt
 **** REMARQUE ****
 Si python n'est pas reconnue, installe la à partir de ce lien https://www.python.org/downloads/
 
-## 5) Configuration (.env)
-
-IMPORTANT: les fichiers `.env` sont locaux et ne sont pas commits.
-
-### Backend (backend/.env)
-
-Template complet (a copier en local):
-
-```env
-
-PORT=4000
-MONGODB_URI=mongodb+srv://test:test2026p2m@cluster0.8lan9ss.mongodb.net/ehealth
-JWT_SECRET=your_secret
-JWT_EXPIRES_IN=7d
-FRONTEND_ORIGIN=http://localhost:5173
-AI_SERVICE_URL=http://127.0.0.1:8100
-AI_SERVICE_TIMEOUT_MS=4000
-
-```
-
-### Frontend (optionnel)
-
-Le frontend lit `VITE_API_BASE_URL` et fallback sur `http://localhost:4000/api`.
-
-## 6) Lancement local complet (3 terminaux)
+## 5) Lancement local complet (3 terminaux)
 
 ### Terminal A - AI service
 
@@ -148,7 +124,7 @@ Acces local:
 - Backend health: `http://localhost:4000/health`
 - AI health: `http://127.0.0.1:8100/health`
 
-## 7) Verifications rapides
+## 6) Verifications rapides
 
 ### AI
 
@@ -163,7 +139,7 @@ Invoke-RestMethod http://localhost:4000/health
 Invoke-RestMethod http://localhost:4000/api
 ```
 
-## 8) Seed base de donnees et comptes demo
+## 7) Seed base de donnees et comptes demo
 
 ```powershell
 npm run seed:backend
@@ -178,7 +154,7 @@ Exemple:
 
 - `sophie.turner@respir.ai` / `Patient123!`
 
-## 9) Scripts utiles
+## 8) Scripts utiles
 
 ### Racine
 
@@ -202,7 +178,7 @@ Exemple:
 - `./scripts/run_dev.ps1`
 - `./scripts/smoke_test.ps1`
 
-## 10) API map
+## 9) API map
 
 Base backend: `http://localhost:4000/api`
 
@@ -277,7 +253,7 @@ Base AI: `http://127.0.0.1:8100`
 - `GET /api/v1/rag/web-test`
 - `GET /api/v1/guidelines`
 
-## 11) Exemple appel AI
+## 10) Exemple appel AI
 
 ```powershell
 $payload = @{
@@ -296,7 +272,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8100/api/v1/explain" `
   -Body ($payload | ConvertTo-Json -Depth 8)
 ```
 
-## 12) Modeles AI
+## 11) Modeles AI
 
 Deux modeles sont attendus dans `models/`:
 
@@ -305,14 +281,14 @@ Deux modeles sont attendus dans `models/`:
 
 Le service supporte aussi un modele audio optionnel si present dans `models/respiratory/model_best.pth`.
 
-## 13) Option Docker pour AI
+## 12) Option Docker pour AI
 
 ```powershell
 docker build -t ehealth-ai ./ai-service
 docker run --rm -p 8100:8100 --env-file ./ai-service/.env ehealth-ai
 ```
 
-## 14) Troubleshooting
+## 13) Troubleshooting
 
 1. `MONGODB_URI is not defined`
 - Verifier `backend/.env` et la variable `MONGODB_URI`.
@@ -330,7 +306,7 @@ docker run --rm -p 8100:8100 --env-file ./ai-service/.env ehealth-ai
 5. Script PowerShell bloque
 - Executer `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 
-## 15) Build et run production (minimal)
+## 14) Build et run production (minimal)
 
 Frontend:
 
