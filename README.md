@@ -97,7 +97,7 @@ Template complet (a copier en local):
 ```env
 
 PORT=4000
-MONGODB_URI=your_mongodb_uri
+MONGODB_URI=mongodb+srv://test:test2026p2m@cluster0.8lan9ss.mongodb.net/ehealth
 JWT_SECRET=your_secret
 JWT_EXPIRES_IN=7d
 FRONTEND_ORIGIN=http://localhost:5173
