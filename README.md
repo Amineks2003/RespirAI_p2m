@@ -156,13 +156,6 @@ Acces local:
 Invoke-RestMethod http://127.0.0.1:8100/health
 ```
 
-Smoke test AI:
-
-```powershell
-cd ai-service
-./scripts/smoke_test.ps1
-```
-
 ### Backend
 
 ```powershell
