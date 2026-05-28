@@ -77,7 +77,7 @@ export function LoginPage() {
 
           <div className="grid grid-cols-1 gap-4 text-left">
             {[
-              { icon: Sparkles, title: "Trend-Aware AI Insights", desc: "4-model fusion with explainable factors and risk re-evaluation" },
+              { icon: Sparkles, title: "Trend-Aware AI Insights", desc: "2-model fusion with explainable factors and risk re-evaluation" },
               { icon: Shield, title: "Security By Design", desc: "Role-based access, encrypted data flow and audit-ready trails" },
               { icon: Heart, title: "Actionable Monitoring", desc: "Continuous vitals + environment context with early warning windows" },
             ].map((f) => (
@@ -94,7 +94,7 @@ export function LoginPage() {
           </div>
 
           <div className="flex items-center justify-center gap-6 mt-10">
-            {["2h Alerts", "3 Models", "RAG Explainability", "24/7 Tracking"].map((b) => (
+            {["2h Alerts", "2 Models", "RAG Explainability", "24/7 Tracking"].map((b) => (
               <div key={b} className="text-center">
                 <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-1 border border-white/10">
                   <CheckCircle className="w-4 h-4 text-emerald-400" />

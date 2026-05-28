@@ -1,26 +1,41 @@
 # eHealth Platform UI Design
 
-README global du projet (frontend + backend + service AI), avec commandes de lancement, configuration, architecture et endpoints.
+README global (frontend + backend + AI service) avec installation, configuration, commandes et endpoints.
 
 ## 1) Vue d ensemble
 
-Cette plateforme contient 3 briques principales:
+La plateforme contient 3 briques:
 
 - Frontend: React + Vite (UI medecin/patient)
 - Backend: Node.js + Express + MongoDB + JWT
-- AI Service: FastAPI (prediction du risque respiratoire + explication + base de recommandations)
+- AI Service: FastAPI (prediction du risque + explication + RAG)
 
 Flux principal:
 
 1. Le frontend appelle le backend sur `http://localhost:4000/api` (ou `VITE_API_BASE_URL`).
 2. Le backend appelle le service AI sur `http://127.0.0.1:8100` (via `AI_SERVICE_URL`).
-3. Le service AI calcule un score de risque et retourne prediction + explication.
+3. Le service AI renvoie les scores, la fusion des 2 modeles et les explications.
+
+### Explication du projet
+
+Ce projet simule une plateforme e-sante centre sur la prediction du risque respiratoire. Il combine un portail clinicien, une app patient et un microservice AI pour evaluer des signaux vitaux, produire un score de risque et proposer des explications et recommandations.
+
+- Portail clinicien: dashboard, suivi patients, historiques vitaux/environnement, validation ou rejet des alertes, rapports PDF.
+- Portail patient: profil, medicaments, historique, notifications et chat avec le soignant.
+- AI service: inference multi-modele (2 modeles), explications RAG, execution manuelle sur fichiers (apnea/CSV) et endpoints de health.
+
+### Cas d usage (clinicien/patient/AI)
+
+- Clinicien: surveiller les risques, consulter les tendances vitaux, valider ou rejeter une alerte, générer un rapport PDF à partir du lancement des prédictions et analyse des deux modèles ai et contacter un patient.
+- Patient: consulter son profil, recevoir les notifications, suivre ses medicaments, partager des données et discuter avec le soignant.
+- AI service: exécuter les prédictions, générer les explications RAG, traiter des fichiers (apnea/CSV) et alimenter le backend en scores.
 
 ## 2) Structure du monorepo
 
 - `src/` -> frontend React
 - `backend/` -> API Express
-- `ai-service/` -> microservice FastAPI + pipeline ML
+- `ai-service/` -> microservice FastAPI
+- `models/` -> artefacts AI (apnea + spo2)
 
 Fichiers utiles:
 
@@ -30,7 +45,8 @@ Fichiers utiles:
 - Backend app: `backend/src/app.js`
 - Backend route index: `backend/src/routes/index.js`
 - AI app entrypoint: `ai-service/app/main.py`
-- AI routes: `ai-service/app/api/routes.py`
+- AI config: `ai-service/app/config.py`
+- AI model manager: `ai-service/app/model_service.py`
 - AI dev script (Windows): `ai-service/scripts/run_dev.ps1`
 - AI smoke test (Windows): `ai-service/scripts/smoke_test.ps1`
 
@@ -40,14 +56,13 @@ Fichiers utiles:
 - npm
 - Python 3.11 (recommande pour `ai-service`)
 - MongoDB local (ou URI distante)
-- Windows PowerShell (si tu utilises les scripts `.ps1`)
+- PowerShell (si tu utilises les scripts `.ps1`)
 
 ## 4) Installation
 
 Depuis la racine du projet:
 
 ```powershell
-cd "C:\Users\ksont\Desktop\eHealth Platform UI Design"
 npm install
 ```
 
@@ -58,7 +73,7 @@ cd backend
 npm install
 ```
 
-Le service AI utilise l environnement Python local. Si FastAPI ou Uvicorn manquent, installe les dependances avec:
+Installer les dependances AI:
 
 ```powershell
 cd ai-service
@@ -67,37 +82,36 @@ cd ai-service
 
 ## 5) Configuration (.env)
 
-### Backend (`backend/.env`)
+IMPORTANT: les fichiers `.env` sont locaux et ne sont pas commits.
 
-Exemple minimum:
+### Backend (backend/.env)
+
+Template complet (a copier en local):
 
 ```env
+
 PORT=4000
-MONGODB_URI=mongodb://127.0.0.1:27017/ehealth_platform
+MONGODB_URI=mongodb+srv://ksontiniamine99_db_user:amine2003@cluster0.8lan9ss.mongodb.net/ehealth
 JWT_SECRET=replace-with-strong-secret
 JWT_EXPIRES_IN=7d
 FRONTEND_ORIGIN=http://localhost:5173
 AI_SERVICE_URL=http://127.0.0.1:8100
 AI_SERVICE_TIMEOUT_MS=4000
+
 ```
 
-### AI service (`ai-service/.env`)
+### AI service (ai-service/.env)
 
-Variables principales:
+Template principal:
 
 ```env
-AI_SERVICE_HOST=0.0.0.0
-AI_SERVICE_PORT=8100
-AI_MODELS_DIR=../models
-GUIDELINES_DIR=./data/guidelines
-MAX_SERIES_LENGTH=48
-DISTRESS_THRESHOLD=0.55
+
+RAG_ENABLE_WEB_SEARCH=1
+RAG_FORCE_WEB_SEARCH=0
+RAG_WEB_MAX_RESULTS=4
+TAVILY_API_KEY=ta_cle_tavily_ici
+
 ```
-
-Notes:
-
-- `AI_MODELS_DIR` pointe par defaut vers `../models`, donc les artefacts finaux restent dans le dossier racine `models/`.
-- Si TensorFlow/PyTorch ne sont pas installes, l app verifie quand meme les artefacts et utilise un mode de prediction deterministe pour garder les boutons Run AI + RAG fonctionnels en local.
 
 ### Frontend (optionnel)
 
@@ -108,14 +122,8 @@ Le frontend lit `VITE_API_BASE_URL` et fallback sur `http://localhost:4000/api`.
 ### Terminal A - AI service
 
 ```powershell
-cd "C:\Users\ksont\Desktop\eHealth Platform UI Design\ai-service"
-.\scripts\run_dev.ps1
-```
-
-Si PowerShell bloque les scripts:
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+cd ai-service
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8100 
 ```
 
 ### Terminal B - Backend
@@ -123,14 +131,13 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 Depuis la racine:
 
 ```powershell
-cd "C:\Users\ksont\Desktop\eHealth Platform UI Design"
 npm run dev:backend
 ```
 
 Ou depuis `backend/`:
 
 ```powershell
-cd "C:\Users\ksont\Desktop\eHealth Platform UI Design\backend"
+cd backend
 npm run dev
 ```
 
@@ -139,7 +146,6 @@ npm run dev
 Depuis la racine:
 
 ```powershell
-cd "C:\Users\ksont\Desktop\eHealth Platform UI Design"
 npm run dev
 ```
 
@@ -160,8 +166,8 @@ Invoke-RestMethod http://127.0.0.1:8100/health
 Smoke test AI:
 
 ```powershell
-cd "C:\Users\ksont\Desktop\eHealth Platform UI Design\ai-service"
-.\scripts\smoke_test.ps1
+cd ai-service
+./scripts/smoke_test.ps1
 ```
 
 ### Backend
@@ -173,10 +179,7 @@ Invoke-RestMethod http://localhost:4000/api
 
 ## 8) Seed base de donnees et comptes demo
 
-Pour initialiser des donnees demo backend:
-
 ```powershell
-cd "C:\Users\ksont\Desktop\eHealth Platform UI Design"
 npm run seed:backend
 ```
 
@@ -185,7 +188,7 @@ Comptes seed:
 - Docteur: `doctor@respir.ai` / `Doctor123!`
 - Patients: `prenom.nom@respir.ai` / `Patient123!`
 
-Exemple patient seed:
+Exemple:
 
 - `sophie.turner@respir.ai` / `Patient123!`
 
@@ -204,9 +207,9 @@ Exemple patient seed:
 
 - `npm run dev`
 - `npm run start`
-- `npm run seed`
 - `npm run dedupe:doctor-ai-results`
 - `npm run dedupe:doctor-ai-results:apply`
+- `npm run backfill:model-inputs`
 
 ### AI service
 
@@ -281,6 +284,11 @@ Base AI: `http://127.0.0.1:8100`
 - `GET /health`
 - `POST /api/v1/predict`
 - `POST /api/v1/explain`
+- `POST /api/v1/manual/run`
+- `POST /api/v1/spo2-lstm/predict-csv`
+- `POST /api/v1/rag/rebuild`
+- `GET /api/v1/rag/status`
+- `GET /api/v1/rag/web-test`
 - `GET /api/v1/guidelines`
 
 ## 11) Exemple appel AI
@@ -302,29 +310,18 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8100/api/v1/explain" `
   -Body ($payload | ConvertTo-Json -Depth 8)
 ```
 
-## 12) Entrainement modeles AI
+## 12) Modeles AI
 
-Depuis `ai-service/`:
+Deux modeles sont attendus dans `models/`:
 
-```powershell
-cd "C:\Users\ksont\Desktop\eHealth Platform UI Design\ai-service"
-python -m app.training.run_training --data-dir data --models-dir models --seed 42
-```
+- `models/spo2/lstm_SPO2_model.keras`
+- `models/apnea/cnn_bilstm_model.keras`
 
-Artefacts generes dans `ai-service/models`:
-
-- `vital_signs_model.pkl`
-- `symptoms_model.pkl`
-- `history_model.pkl`
-- `environment_model.pkl`
-- `preprocessor.pkl`
-- `training_metrics.json`
-- `unified_dataset_preview.csv`
+Le service supporte aussi un modele audio optionnel si present dans `models/respiratory/model_best.pth`.
 
 ## 13) Option Docker pour AI
 
 ```powershell
-cd "C:\Users\ksont\Desktop\eHealth Platform UI Design"
 docker build -t ehealth-ai ./ai-service
 docker run --rm -p 8100:8100 --env-file ./ai-service/.env ehealth-ai
 ```
@@ -352,24 +349,19 @@ docker run --rm -p 8100:8100 --env-file ./ai-service/.env ehealth-ai
 Frontend:
 
 ```powershell
-cd "C:\Users\ksont\Desktop\eHealth Platform UI Design"
-npm run build
+npm run dev
 ```
 
 Backend:
 
 ```powershell
-cd "C:\Users\ksont\Desktop\eHealth Platform UI Design\backend"
-npm run start
+cd backend
+npm run dev
 ```
 
 AI:
 
 ```powershell
-cd "C:\Users\ksont\Desktop\eHealth Platform UI Design\ai-service"
+cd ai-service
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8100
 ```
-
----
-
-Si tu veux, je peux aussi te generer une version "README rapide" (1 page) et garder ce fichier comme doc complete.
