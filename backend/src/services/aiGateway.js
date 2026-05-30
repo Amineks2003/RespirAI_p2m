@@ -19,9 +19,6 @@ const DEFAULT_INTAKE_FORM = {
   hypertension: false,
   diabetes: false,
   heart_disease: false,
-  air_quality_index: 60,
-  environment_temperature: 24,
-  humidity: 50,
 };
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -154,7 +151,7 @@ const normalizeSmokingStatus = (value) => {
     : DEFAULT_INTAKE_FORM.smoking_status;
 };
 
-const normalizeIntakeForm = ({ intakeForm = {}, latestVital = {}, latestEnvironment = {} } = {}) => {
+const normalizeIntakeForm = ({ intakeForm = {}, latestVital = {} } = {}) => {
   const respiratoryRate = clamp(
     firstNumber(
       intakeForm?.respiratory_rate,
@@ -220,33 +217,6 @@ const normalizeIntakeForm = ({ intakeForm = {}, latestVital = {}, latestEnvironm
     hypertension: firstBoolean(intakeForm?.hypertension, false) ?? false,
     diabetes: firstBoolean(intakeForm?.diabetes, false) ?? false,
     heart_disease: firstBoolean(intakeForm?.heart_disease, false) ?? false,
-    air_quality_index: clamp(
-      firstNumber(
-        intakeForm?.air_quality_index,
-        intakeForm?.aqi,
-        latestEnvironment?.air_quality_index,
-        latestEnvironment?.aqi,
-        DEFAULT_INTAKE_FORM.air_quality_index,
-      ) ?? DEFAULT_INTAKE_FORM.air_quality_index,
-      0,
-      500,
-    ),
-    environment_temperature: clamp(
-      firstNumber(
-        intakeForm?.environment_temperature,
-        latestEnvironment?.environment_temperature,
-        latestEnvironment?.temperature,
-        DEFAULT_INTAKE_FORM.environment_temperature,
-      ) ?? DEFAULT_INTAKE_FORM.environment_temperature,
-      -30,
-      60,
-    ),
-    humidity: clamp(
-      firstNumber(intakeForm?.humidity, latestEnvironment?.humidity, DEFAULT_INTAKE_FORM.humidity)
-        ?? DEFAULT_INTAKE_FORM.humidity,
-      0,
-      100,
-    ),
   };
 };
 
@@ -280,8 +250,8 @@ const buildPhysiologySeries = ({ latestVital, history = [], normalizedIntake }) 
   }));
 };
 
-const buildAiPayload = ({ patientId, latestVital, historyVitals, latestEnvironment, intakeForm }) => {
-  const normalizedIntake = normalizeIntakeForm({ intakeForm, latestVital, latestEnvironment });
+const buildAiPayload = ({ patientId, latestVital, historyVitals, intakeForm }) => {
+  const normalizedIntake = normalizeIntakeForm({ intakeForm, latestVital });
 
   const apneaLevel = clamp(
     (normalizedIntake.shortness_of_breath ? 4 : 1)
@@ -295,21 +265,10 @@ const buildAiPayload = ({ patientId, latestVital, historyVitals, latestEnvironme
     patient_id: String(patientId || "unknown"),
     intake_form: normalizedIntake,
     physiology: buildPhysiologySeries({ latestVital, history: historyVitals, normalizedIntake }),
-    environment: {
-      aqi: normalizedIntake.air_quality_index,
-      temperature: normalizedIntake.environment_temperature,
-      humidity: normalizedIntake.humidity,
-      pm25: Number(latestEnvironment?.pm25 ?? normalizedIntake.air_quality_index),
-      pm10: Number(latestEnvironment?.pm10 ?? normalizedIntake.air_quality_index),
-    },
-
     spo2: normalizedIntake.spo2,
     rr: normalizedIntake.respiratory_rate,
     hr: normalizedIntake.heart_rate,
     apnea_level: apneaLevel,
-    aqi: normalizedIntake.air_quality_index,
-    temperature: normalizedIntake.environment_temperature,
-    humidity: normalizedIntake.humidity,
 
     vitals: {
       spo2: normalizedIntake.spo2,
@@ -328,14 +287,12 @@ export const predictRiskFromAiService = async ({
   patientId,
   latestVital,
   historyVitals,
-  latestEnvironment,
   intakeForm,
 }) => {
   const payload = buildAiPayload({
     patientId,
     latestVital,
     historyVitals,
-    latestEnvironment,
     intakeForm,
   });
 
@@ -368,11 +325,10 @@ export const explainRiskFromAiService = async ({
   patientId,
   latestVital,
   historyVitals,
-  latestEnvironment,
   intakeForm,
 }) => {
   const payload = {
-    ...buildAiPayload({ patientId, latestVital, historyVitals, latestEnvironment, intakeForm }),
+    ...buildAiPayload({ patientId, latestVital, historyVitals, intakeForm }),
     top_k_guidelines: 4,
   };
 
@@ -387,7 +343,6 @@ export const runManualAiFromAiService = async ({
   patientId,
   latestVital,
   historyVitals = [],
-  latestEnvironment,
   intakeForm,
   uploadedFiles,
 }) => {
@@ -396,7 +351,6 @@ export const runManualAiFromAiService = async ({
       patientId,
       latestVital,
       historyVitals,
-      latestEnvironment,
       intakeForm,
     }),
     model: modelKey || "all_models",

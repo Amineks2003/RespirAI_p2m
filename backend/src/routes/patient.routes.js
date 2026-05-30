@@ -6,7 +6,6 @@ import { User } from "../models/User.js";
 import { PatientProfile } from "../models/PatientProfile.js";
 import { DoctorProfile } from "../models/DoctorProfile.js";
 import { VitalRecord } from "../models/VitalRecord.js";
-import { EnvironmentSnapshot } from "../models/EnvironmentSnapshot.js";
 import { RiskAssessment } from "../models/RiskAssessment.js";
 import { MedicationSchedule } from "../models/MedicationSchedule.js";
 import { Notification } from "../models/Notification.js";
@@ -46,7 +45,7 @@ const ensureCurrentPatientData = async (userId) => {
   return profile;
 };
 
-const formatDoctorAiData = ({ profile, latestVital, latestEnvironment, latestRisk, medications = [] }) => {
+const formatDoctorAiData = ({ profile, latestVital, latestRisk, medications = [] }) => {
   const sentResult = profile.latestDoctorSentResult || null;
   const insights = sentResult?.insights || profile.latestAiInsights || null;
   const doctorInput = sentResult?.doctorInput || insights?.doctorInput || profile.latestDoctorAiInput || null;
@@ -57,7 +56,6 @@ const formatDoctorAiData = ({ profile, latestVital, latestEnvironment, latestRis
     insights,
     sentResult,
     latestVital,
-    latestEnvironment,
     latestRisk,
     medications,
     updatedAt: doctorInput?.usedAt || sentResult?.sentAt || profile.updatedAt || null,
@@ -158,7 +156,6 @@ patientRouter.get(
       latestVital,
       latestModel1Vital,
       latestModel2Vital,
-      latestEnvironment,
       latestRisk,
       medications,
       unreadNotifications,
@@ -173,7 +170,6 @@ patientRouter.get(
         patient: req.user.userId,
         "modelInputs.model2Spo2.enabled": true,
       }).sort({ timestamp: -1 }),
-      EnvironmentSnapshot.findOne({ patient: req.user.userId }).sort({ timestamp: -1 }),
       RiskAssessment.findOne({ patient: req.user.userId }).sort({ createdAt: -1 }),
       MedicationSchedule.find({ patient: req.user.userId }).sort({ createdAt: 1 }),
       Notification.countDocuments({ user: req.user.userId, read: false }),
@@ -184,7 +180,6 @@ patientRouter.get(
       patientId: profile.patientCode,
       latestVital,
       historyVitals: [...recentVitals].reverse(),
-      latestEnvironment,
       patientCondition: profile.condition,
       intakeForm: profile.latestIntakeForm || null,
     });
@@ -194,7 +189,6 @@ patientRouter.get(
       home: {
         profile,
         latestVital,
-        latestEnvironment,
         latestRisk,
         modelVitals: buildPatientModelVitals({
           latestVital,
@@ -202,13 +196,7 @@ patientRouter.get(
           latestModel2Vital,
         }),
         latestDoctorSentResult: profile.latestDoctorSentResult || null,
-        doctorAiData: formatDoctorAiData({
-          profile,
-          latestVital,
-          latestEnvironment,
-          latestRisk,
-          medications,
-        }),
+        doctorAiData: formatDoctorAiData({ profile, latestVital, latestRisk, medications }),
         medications,
         unreadNotifications,
         aiInsight: computedInsight,
@@ -222,9 +210,8 @@ patientRouter.get(
   asyncHandler(async (req, res) => {
     const profile = await ensureCurrentPatientData(req.user.userId);
 
-    const [latestVital, latestEnvironment, latestRisk, medications] = await Promise.all([
+    const [latestVital, latestRisk, medications] = await Promise.all([
       VitalRecord.findOne({ patient: req.user.userId }).sort({ timestamp: -1 }),
-      EnvironmentSnapshot.findOne({ patient: req.user.userId }).sort({ timestamp: -1 }),
       RiskAssessment.findOne({ patient: req.user.userId }).sort({ createdAt: -1 }),
       MedicationSchedule.find({ patient: req.user.userId }).sort({ createdAt: 1 }),
     ]);
@@ -234,7 +221,6 @@ patientRouter.get(
       doctorAiData: formatDoctorAiData({
         profile,
         latestVital,
-        latestEnvironment,
         latestRisk,
         medications,
       }),

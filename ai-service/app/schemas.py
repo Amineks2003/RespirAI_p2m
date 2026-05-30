@@ -9,7 +9,6 @@ class PredictRequest(BaseModel):
     patient_id: Optional[str] = None
     intake_form: Dict[str, Any] = Field(default_factory=dict)
     physiology: List[Dict[str, Any]] = Field(default_factory=list)
-    environment: Dict[str, Any] = Field(default_factory=dict)
     model: Optional[str] = None
     selected_models: Optional[List[str]] = None
     top_k_guidelines: int = 4

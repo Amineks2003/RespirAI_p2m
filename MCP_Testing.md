@@ -85,24 +85,6 @@ Si le fichier `patient_data.csv` est dans le dossier `ai-service` :
 python -m app.mcp_host_demo --mode spo2 --csv .\patient_data.csv
 ```
 
-Si le fichier `patient_data.csv` est dans la racine du projet, c’est-à-dire dans :
-
-```text
-C:\Users\ksont\Desktop\eHealth Platform UI Design\patient_data.csv
-```
-
-alors depuis `ai-service`, utiliser :
-
-```powershell
-python -m app.mcp_host_demo --mode spo2 --csv ..\patient_data.csv
-```
-
-Avec un chemin absolu :
-
-```powershell
-python -m app.mcp_host_demo --mode spo2 --csv "C:\Users\ksont\Desktop\eHealth Platform UI Design\patient_data.csv"
-```
-
 Cette commande teste :
 
 ```text
@@ -150,13 +132,6 @@ Si `patient_data.csv` est dans `ai-service` :
 ```powershell
 python -m app.mcp_host_demo --mode all --patient-id "#P-2287" --csv .\patient_data.csv --apn ..\data\apnea\a01.apn --dat ..\data\apnea\a01.dat --hea ..\data\apnea\a01.hea
 ```
-
-Si `patient_data.csv` est dans la racine du projet :
-
-```powershell
-python -m app.mcp_host_demo --mode all --patient-id "#P-2287" --csv ..\patient_data.csv --apn ..\data\apnea\a01.apn --dat ..\data\apnea\a01.dat --hea ..\data\apnea\a01.hea
-```
-
 ---
 
 ## 7. Tester directement le statut RAG via FastAPI
@@ -185,38 +160,7 @@ web_search.available: true
 
 ---
 
-## 8. Erreur fréquente : fichier CSV introuvable
-
-Erreur possible :
-
-```text
-FileNotFoundError: No such file or directory: 'patient_data.csv'
-```
-
-Cause : le fichier n’est pas dans le dossier courant `ai-service`.
-
-Solutions :
-
-```powershell
-dir
-dir ..
-```
-
-Si le fichier est dans le dossier parent :
-
-```powershell
-python -m app.mcp_host_demo --mode spo2 --csv ..\patient_data.csv
-```
-
-Ou utiliser le chemin absolu :
-
-```powershell
-python -m app.mcp_host_demo --mode spo2 --csv "C:\chemin\vers\patient_data.csv"
-```
-
----
-
-## 9. Résumé des commandes principales
+## 8. Résumé des commandes principales
 
 ```powershell
 python -m app.mcp_host_demo --mode health

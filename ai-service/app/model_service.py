@@ -972,7 +972,7 @@ class ModelManager:
         vitals = payload.get("vitals") or {}
         audio = payload.get("audio") or {}
         apnea = payload.get("apnea") or {}
-        environment = payload.get("environment") or {}
+        # environment payload removed — rely on intake/payload fields only
         physiology = payload.get("physiology") if isinstance(payload.get("physiology"), list) else []
         latest = physiology[-1] if physiology else {}
 
@@ -1045,9 +1045,9 @@ class ModelManager:
             "chronic_condition_count": chronic_count,
             "cough_events": cough_events,
             "apnea_level": clamp(to_number(payload.get("apnea_level"), latest.get("apnea_level"), apnea.get("apnea_level"), default=1), 0, 10),
-            "aqi": clamp(to_number(payload.get("aqi"), intake.get("air_quality_index"), environment.get("aqi"), environment.get("air_quality_index"), default=60), 0, 500),
-            "environment_temperature": clamp(to_number(intake.get("environment_temperature"), environment.get("temperature"), default=24), -30, 60),
-            "humidity": clamp(to_number(intake.get("humidity"), environment.get("humidity"), default=50), 0, 100),
+            "aqi": clamp(to_number(payload.get("aqi"), intake.get("air_quality_index"), default=60), 0, 500),
+            "environment_temperature": clamp(to_number(intake.get("environment_temperature"), payload.get("environment_temperature"), default=24), -30, 60),
+            "humidity": clamp(to_number(intake.get("humidity"), payload.get("humidity"), default=50), 0, 100),
         }
 
     def _predict_spo2(self, signals: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:

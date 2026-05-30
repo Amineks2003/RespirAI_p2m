@@ -139,13 +139,9 @@ Invoke-RestMethod http://localhost:4000/health
 Invoke-RestMethod http://localhost:4000/api
 ```
 
-## 7) Seed base de donnees et comptes demo
+## 7) Comptes demo
 
-```powershell
-npm run seed:backend
-```
-
-Comptes seed:
+Comptes demo:
 
 - Docteur: `doctor@respir.ai` / `Doctor123!`
 - Patients: `prenom.nom@respir.ai` / `Patient123!`
@@ -163,7 +159,6 @@ Exemple:
 - `npm run build` -> build frontend
 - `npm run dev:backend` -> backend en mode dev
 - `npm run start:backend` -> backend en mode start
-- `npm run seed:backend` -> seed MongoDB
 
 ### Backend
 
@@ -198,7 +193,6 @@ Base backend: `http://localhost:4000/api`
 - `POST /patients/:patientIdentifier/upload`
 - `GET /patients/:patientIdentifier/ai-insights`
 - `GET /patients/:patientIdentifier/vitals`
-- `GET /patients/:patientIdentifier/environment`
 - `GET /patients/:patientIdentifier/risk-history`
 - `POST /patients/:patientIdentifier/risk/validate`
 - `POST /patients/:patientIdentifier/risk/dismiss`
@@ -253,42 +247,14 @@ Base AI: `http://127.0.0.1:8100`
 - `GET /api/v1/rag/web-test`
 - `GET /api/v1/guidelines`
 
-## 10) Exemple appel AI
-
-```powershell
-$payload = @{
-  patient_id = "demo"
-  physiology = @(
-    @{ spo2 = 95; rr = 20; hr = 86; cough_events_per_hour = 4; wheezing_detected = $false },
-    @{ spo2 = 93; rr = 23; hr = 94; cough_events_per_hour = 8; wheezing_detected = $true }
-  )
-  environment = @{ aqi = 125; temperature = 30; humidity = 70 }
-  top_k_guidelines = 3
-}
-
-Invoke-RestMethod -Uri "http://127.0.0.1:8100/api/v1/explain" `
-  -Method Post `
-  -ContentType "application/json" `
-  -Body ($payload | ConvertTo-Json -Depth 8)
-```
-
-## 11) Modeles AI
+## 10) Modeles AI
 
 Deux modeles sont attendus dans `models/`:
 
 - `models/spo2/lstm_SPO2_model.keras`
 - `models/apnea/cnn_bilstm_model.keras`
 
-Le service supporte aussi un modele audio optionnel si present dans `models/respiratory/model_best.pth`.
-
-## 12) Option Docker pour AI
-
-```powershell
-docker build -t ehealth-ai ./ai-service
-docker run --rm -p 8100:8100 --env-file ./ai-service/.env ehealth-ai
-```
-
-## 13) Troubleshooting
+## 11) Troubleshooting
 
 1. `MONGODB_URI is not defined`
 - Verifier `backend/.env` et la variable `MONGODB_URI`.
@@ -306,7 +272,7 @@ docker run --rm -p 8100:8100 --env-file ./ai-service/.env ehealth-ai
 5. Script PowerShell bloque
 - Executer `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 
-## 14) Build et run production (minimal)
+## 12) Build et run production (minimal)
 
 Frontend:
 

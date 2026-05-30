@@ -9,9 +9,6 @@ const NUMERIC_RULES = {
   heart_rate: { min: 20, max: 220 },
   respiratory_rate: { min: 5, max: 80 },
   temperature: { min: 30, max: 45 },
-  air_quality_index: { min: 0, max: 500 },
-  environment_temperature: { min: -30, max: 60 },
-  humidity: { min: 0, max: 100 },
 };
 
 const BOOLEAN_FIELDS = [
@@ -36,9 +33,6 @@ const FORM_FIELDS = [
   "respiratory_rate",
   "temperature",
   ...BOOLEAN_FIELDS,
-  "air_quality_index",
-  "environment_temperature",
-  "humidity",
 ];
 
 const normalizeBoolean = (value) => {
@@ -83,9 +77,6 @@ const defaultFormData = {
   hypertension: false,
   diabetes: false,
   heart_disease: false,
-  air_quality_index: 60,
-  environment_temperature: 24,
-  humidity: 50,
 };
 
 export const getDefaultPatientFormData = () => ({ ...defaultFormData });

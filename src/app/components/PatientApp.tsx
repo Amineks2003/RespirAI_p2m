@@ -2,11 +2,11 @@ import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router";
 import {
   Shield, Wind, Heart, Bell, ChevronRight, Activity,
-  Sun, Home, BarChart2, MessageCircle, Droplets,
-  Thermometer, Zap, Clock, CheckCircle,
-  TrendingDown, TrendingUp, X, Send, Mic, Leaf,
+  Home, BarChart2, MessageCircle,
+  Zap, Clock, CheckCircle,
+  TrendingDown, TrendingUp, X, Send, Mic,
   Calendar, User, LogOut, Phone, Camera, FileText,
-  Sparkles, CloudRain, CloudSun,
+  Sparkles,
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -51,7 +51,6 @@ const formatTwoDecimals = (value: unknown) => {
 ──────────────────────────────────────────────────────────── */
 function HomeScreen({ homeData, meds, onToggleMedication, pendingMedicationIds, latestDoctorResult }: any) {
   const latestVital = homeData?.latestVital || {};
-  const latestEnvironment = homeData?.latestEnvironment || {};
   const aiInsight = homeData?.aiInsight || {};
   const modelVitals = homeData?.modelVitals || {};
 
@@ -110,10 +109,6 @@ function HomeScreen({ homeData, meds, onToggleMedication, pendingMedicationIds, 
     model2Output.riskScore,
   );
 
-  const aqi = hasNumeric(latestEnvironment.aqi) ? latestEnvironment.aqi : null;
-  const humidity = hasNumeric(latestEnvironment.humidity) ? latestEnvironment.humidity : null;
-  const temperature = hasNumeric(latestEnvironment.temperature) ? latestEnvironment.temperature : null;
-
   const spo2Progress = spo2 !== null ? clamp(spo2, 0, 100) : 0;
   const breathingProgress = breathingRate !== null ? clamp(((breathingRate - 8) / 20) * 100, 0, 100) : 0;
   const heartProgress = heartRate !== null ? clamp(((heartRate - 45) / 95) * 100, 0, 100) : 0;
@@ -156,24 +151,6 @@ function HomeScreen({ homeData, meds, onToggleMedication, pendingMedicationIds, 
       : model2RiskPercent >= 50
         ? "bg-amber-500"
         : "bg-emerald-500";
-
-  const aqiStatus = aqi === null
-    ? "Unknown"
-    : aqi <= 50
-      ? "Good"
-      : aqi <= 100
-        ? "Moderate"
-        : aqi <= 150
-          ? "Unhealthy for Sensitive"
-          : "Unhealthy";
-
-  const temperatureStatus = temperature === null
-    ? "Unknown"
-    : temperature < 18
-      ? "Cool"
-      : temperature <= 25
-        ? "Comfortable"
-        : "Warm";
 
   const monitoringLabel = latestVital?.timestamp
     ? `Live monitoring · updated ${new Date(latestVital.timestamp).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
@@ -316,61 +293,6 @@ function HomeScreen({ homeData, meds, onToggleMedication, pendingMedicationIds, 
             </div>
             <div className="mt-2.5 w-full bg-slate-100 rounded-full h-1.5">
               <div className="h-1.5 rounded-full bg-gradient-to-r from-rose-400 to-pink-400" style={{ width: `${heartProgress}%` }} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Environment Tracker ── */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-slate-800 font-bold">Environment Today</h3>
-          <span className="text-slate-400 text-xs">Room sensor feed</span>
-        </div>
-        <div className="bg-gradient-to-br from-sky-50 to-blue-50 rounded-2xl border border-sky-100 overflow-hidden shadow-sm">
-          {/* Top weather strip */}
-          <div className="flex items-center gap-3 px-4 py-3.5 border-b border-sky-100">
-            <CloudSun className="w-5 h-5 text-amber-500" />
-            <div className="flex-1">
-              <p className="text-xs text-slate-500">{latestEnvironment?.weather || "Weather unavailable"}</p>
-              <p className="text-slate-800 font-semibold text-sm">{temperature !== null ? `${formatTwoDecimals(temperature)}°C` : "--"}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-xs text-slate-500">Humidity</p>
-              <p className="text-slate-700 font-bold text-sm">{humidity !== null ? `${formatTwoDecimals(humidity)}%` : "--"}</p>
-            </div>
-          </div>
-
-          {/* Metrics row */}
-          <div className="grid grid-cols-3 divide-x divide-sky-100 bg-white/60">
-            {/* AQI */}
-            <div className="flex flex-col items-center py-4 px-2">
-              <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center mb-2">
-                <Wind className="w-4.5 h-4.5 text-amber-600" />
-              </div>
-              <span className="text-xs text-slate-500 mb-0.5">Air Quality</span>
-              <span className="text-amber-700 font-black text-lg leading-none">{aqi !== null ? formatTwoDecimals(aqi) : "--"}</span>
-              <span className="text-[10px] text-amber-600 font-semibold mt-1 bg-amber-100 px-2 py-0.5 rounded-full">{aqiStatus}</span>
-            </div>
-
-            {/* Pollen */}
-            <div className="flex flex-col items-center py-4 px-2">
-              <div className="w-9 h-9 rounded-xl bg-lime-100 flex items-center justify-center mb-2">
-                <Leaf className="w-4.5 h-4.5 text-lime-600" />
-              </div>
-              <span className="text-xs text-slate-500 mb-0.5">Pollen</span>
-              <span className="text-lime-700 font-black text-lg leading-none">{latestEnvironment?.pollen || "--"}</span>
-              <span className="text-[10px] text-lime-700 font-semibold mt-1 bg-lime-100 px-2 py-0.5 rounded-full">{latestEnvironment?.pollen ? "Live" : "No data"}</span>
-            </div>
-
-            {/* Temperature */}
-            <div className="flex flex-col items-center py-4 px-2">
-              <div className="w-9 h-9 rounded-xl bg-orange-100 flex items-center justify-center mb-2">
-                <Thermometer className="w-4.5 h-4.5 text-orange-500" />
-              </div>
-              <span className="text-xs text-slate-500 mb-0.5">Temperature</span>
-              <span className="text-orange-700 font-black text-lg leading-none">{temperature !== null ? `${formatTwoDecimals(temperature)}°C` : "--"}</span>
-              <span className="text-[10px] text-orange-600 font-semibold mt-1 bg-orange-100 px-2 py-0.5 rounded-full">{temperatureStatus}</span>
             </div>
           </div>
         </div>

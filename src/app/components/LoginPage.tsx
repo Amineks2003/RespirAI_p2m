@@ -79,7 +79,7 @@ export function LoginPage() {
             {[
               { icon: Sparkles, title: "Trend-Aware AI Insights", desc: "2-model fusion with explainable factors and risk re-evaluation" },
               { icon: Shield, title: "Security By Design", desc: "Role-based access, encrypted data flow and audit-ready trails" },
-              { icon: Heart, title: "Actionable Monitoring", desc: "Continuous vitals + environment context with early warning windows" },
+              { icon: Heart, title: "Actionable Monitoring", desc: "Continuous vitals + AI insights with early warning windows" },
             ].map((f) => (
               <div key={f.title} className="flex items-start gap-4 bg-white/5 rounded-2xl p-4 border border-white/10">
                 <div className="w-9 h-9 rounded-xl bg-blue-500/30 flex items-center justify-center flex-shrink-0">

@@ -1,12 +1,10 @@
 import { VitalRecord } from "../models/VitalRecord.js";
-import { EnvironmentSnapshot } from "../models/EnvironmentSnapshot.js";
 import { RiskAssessment } from "../models/RiskAssessment.js";
 import { MedicationSchedule } from "../models/MedicationSchedule.js";
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const hoursAgo = (hours) => new Date(Date.now() - hours * 60 * 60 * 1000);
 const REFRESH_VITALS_MINUTES = 20;
-const REFRESH_ENVIRONMENT_MINUTES = 45;
 
 const hashString = (value) => {
   let hash = 0;
@@ -18,18 +16,18 @@ const hashString = (value) => {
 
 const getStatusDefaults = (status) => {
   if (status === "critical") {
-    return { spo2: 87, hr: 104, rr: 24, apneaLevel: 8, risk: 86, aqi: 162, temperature: 25.2, humidity: 71 };
+    return { spo2: 87, hr: 104, rr: 24, apneaLevel: 8, risk: 86 };
   }
 
   if (status === "warning") {
-    return { spo2: 92, hr: 92, rr: 20, apneaLevel: 6, risk: 64, aqi: 138, temperature: 23.6, humidity: 66 };
+    return { spo2: 92, hr: 92, rr: 20, apneaLevel: 6, risk: 64 };
   }
 
   if (status === "moderate") {
-    return { spo2: 95, hr: 80, rr: 17, apneaLevel: 3, risk: 43, aqi: 114, temperature: 22.6, humidity: 60 };
+    return { spo2: 95, hr: 80, rr: 17, apneaLevel: 3, risk: 43 };
   }
 
-  return { spo2: 98, hr: 70, rr: 14, apneaLevel: 1, risk: 22, aqi: 82, temperature: 21.5, humidity: 55 };
+  return { spo2: 98, hr: 70, rr: 14, apneaLevel: 1, risk: 22 };
 };
 
 const getMedicationTemplate = (seed) => {
@@ -77,22 +75,6 @@ const buildVitalRecords = (patientId, defaults, seed) => {
   });
 };
 
-const buildEnvironmentSnapshots = (patientId, defaults, seed) => {
-  const pollenScale = ["Low", "Medium", "High"];
-  const weatherScale = ["Clear", "Partly Cloudy", "Cloudy", "Rain"];
-
-  return Array.from({ length: 8 }).map((_, index) => ({
-    patient: patientId,
-    aqi: clamp(defaults.aqi - index * (defaults.risk >= 80 ? 1 : 2) + ((index + seed) % 4) + ((seed % 11) - 5), 35, 220),
-    temperature: Number((defaults.temperature + (((index + seed) % 4) - 1.5) * 0.5 + ((seed % 9) - 4) * 0.08).toFixed(1)),
-    humidity: clamp(defaults.humidity + ((index + seed) % 6) - 3 + ((seed % 7) - 3), 30, 90),
-    pollen: pollenScale[(index + seed) % pollenScale.length],
-    weather: weatherScale[(index + seed) % weatherScale.length],
-    source: "room-sensor",
-    timestamp: hoursAgo(8 - index),
-  }));
-};
-
 const buildRiskHistory = (patientId, defaults, seed) => {
   return Array.from({ length: 10 }).map((_, index) => {
     const trend = defaults.risk >= 80
@@ -122,12 +104,6 @@ const buildRiskHistory = (patientId, defaults, seed) => {
           label: "Apnea Level",
           value: `${apneaEstimate}/10`,
           severity: score > 70 ? "high" : "moderate",
-        },
-        {
-          key: "aqi",
-          label: "Air Quality",
-          value: `AQI ${clamp(defaults.aqi - (9 - index) * 2, 35, 220)}`,
-          severity: defaults.aqi > 130 ? "high" : "moderate",
         },
       ],
       guidelines: ["GINA 2024", "WHO", "GOLD", "ATS"],
@@ -169,31 +145,6 @@ const buildLiveVitalRecord = ({ patientId, latestVital, defaults, seed, status }
   };
 };
 
-const buildLiveEnvironmentSnapshot = ({ patientId, latestEnvironment, defaults, seed, status }) => {
-  const bucket = Math.floor(Date.now() / (60 * 60 * 1000));
-  const oscillation = ((bucket + seed) % 9) - 4;
-  const pollutionBias = status === "critical" ? 3.0 : status === "warning" ? 1.6 : 0.0;
-
-  const previousAqi = Number(latestEnvironment?.aqi ?? defaults.aqi);
-  const previousTemperature = Number(latestEnvironment?.temperature ?? defaults.temperature);
-  const previousHumidity = Number(latestEnvironment?.humidity ?? defaults.humidity);
-
-  const aqi = Math.round(clamp(previousAqi + oscillation * 1.8 + pollutionBias, 35, 220));
-  const temperature = Number(clamp(previousTemperature + oscillation * 0.08, 14, 42).toFixed(1));
-  const humidity = Math.round(clamp(previousHumidity + oscillation * 0.6, 30, 90));
-
-  return {
-    patient: patientId,
-    aqi,
-    temperature,
-    humidity,
-    pollen: latestEnvironment?.pollen || "Medium",
-    weather: latestEnvironment?.weather || "Partly Cloudy",
-    source: "simulation-live",
-    timestamp: new Date(),
-  };
-};
-
 export const ensurePatientClinicalData = async (profile) => {
   const patientId = profile?.user?._id || profile?.user;
   if (!patientId) {
@@ -203,9 +154,8 @@ export const ensurePatientClinicalData = async (profile) => {
   const seed = hashString(`${profile.patientCode || patientId}|${profile.condition || ""}|${profile.status || "stable"}`);
   const defaults = getStatusDefaults(profile.status || "stable");
 
-  const [vitalCount, environmentCount, riskCount, medicationCount] = await Promise.all([
+  const [vitalCount, riskCount, medicationCount] = await Promise.all([
     VitalRecord.countDocuments({ patient: patientId }),
-    EnvironmentSnapshot.countDocuments({ patient: patientId }),
     RiskAssessment.countDocuments({ patient: patientId }),
     MedicationSchedule.countDocuments({ patient: patientId }),
   ]);
@@ -216,11 +166,6 @@ export const ensurePatientClinicalData = async (profile) => {
   if (vitalCount === 0) {
     writes.push(VitalRecord.insertMany(buildVitalRecords(patientId, defaults, seed)));
     createdResources.push("vitals");
-  }
-
-  if (environmentCount === 0) {
-    writes.push(EnvironmentSnapshot.insertMany(buildEnvironmentSnapshots(patientId, defaults, seed)));
-    createdResources.push("environment");
   }
 
   if (riskCount === 0) {
@@ -237,16 +182,11 @@ export const ensurePatientClinicalData = async (profile) => {
     await Promise.all(writes);
   }
 
-  const [latestVital, latestEnvironment] = await Promise.all([
-    VitalRecord.findOne({ patient: patientId }).sort({ timestamp: -1 }),
-    EnvironmentSnapshot.findOne({ patient: patientId }).sort({ timestamp: -1 }),
-  ]);
+  const latestVital = await VitalRecord.findOne({ patient: patientId }).sort({ timestamp: -1 });
 
   const refreshWrites = [];
   const now = Date.now();
   const latestVitalTime = latestVital?.timestamp ? new Date(latestVital.timestamp).getTime() : 0;
-  const latestEnvironmentTime = latestEnvironment?.timestamp ? new Date(latestEnvironment.timestamp).getTime() : 0;
-
   if (!latestVital || now - latestVitalTime >= REFRESH_VITALS_MINUTES * 60 * 1000) {
     refreshWrites.push(
       VitalRecord.create(
@@ -260,21 +200,6 @@ export const ensurePatientClinicalData = async (profile) => {
       ),
     );
     createdResources.push("vitals-refresh");
-  }
-
-  if (!latestEnvironment || now - latestEnvironmentTime >= REFRESH_ENVIRONMENT_MINUTES * 60 * 1000) {
-    refreshWrites.push(
-      EnvironmentSnapshot.create(
-        buildLiveEnvironmentSnapshot({
-          patientId,
-          latestEnvironment,
-          defaults,
-          seed,
-          status: profile.status || "stable",
-        }),
-      ),
-    );
-    createdResources.push("environment-refresh");
   }
 
   if (refreshWrites.length) {

@@ -5,7 +5,6 @@ import { User } from "./models/User.js";
 import { DoctorProfile } from "./models/DoctorProfile.js";
 import { PatientProfile } from "./models/PatientProfile.js";
 import { VitalRecord } from "./models/VitalRecord.js";
-import { EnvironmentSnapshot } from "./models/EnvironmentSnapshot.js";
 import { RiskAssessment } from "./models/RiskAssessment.js";
 import { Alert } from "./models/Alert.js";
 import { Consultation } from "./models/Consultation.js";
@@ -17,12 +16,12 @@ import { ChatMessage } from "./models/ChatMessage.js";
 dotenv.config();
 
 const patientSeed = [
-  { code: "#P-4821", firstName: "James", lastName: "Okafor", age: 67, condition: "COPD III + Asthma", status: "critical", spo2: 86, hr: 104, rr: 24, aqi: 168, humidity: 72, temperature: 25.4, riskBase: 86 },
-  { code: "#P-3302", firstName: "Maria", lastName: "Vasquez", age: 54, condition: "Severe Asthma", status: "warning", spo2: 91, hr: 92, rr: 20, aqi: 141, humidity: 69, temperature: 23.1, riskBase: 66 },
-  { code: "#P-6641", firstName: "Robert", lastName: "Kim", age: 63, condition: "Pulmonary Fibrosis", status: "warning", spo2: 92, hr: 88, rr: 19, aqi: 134, humidity: 65, temperature: 22.8, riskBase: 58 },
-  { code: "#P-5510", firstName: "Ahmed", lastName: "Benali", age: 71, condition: "COPD Stage II", status: "moderate", spo2: 94, hr: 78, rr: 17, aqi: 112, humidity: 61, temperature: 22.2, riskBase: 42 },
-  { code: "#P-2287", firstName: "Sophie", lastName: "Turner", age: 45, condition: "Bronchiectasis", status: "stable", spo2: 97, hr: 68, rr: 15, aqi: 84, humidity: 56, temperature: 21.4, riskBase: 24 },
-  { code: "#P-1190", firstName: "Fatima", lastName: "Diallo", age: 38, condition: "Asthma (Moderate)", status: "stable", spo2: 98, hr: 72, rr: 14, aqi: 76, humidity: 54, temperature: 20.9, riskBase: 18 },
+  { code: "#P-4821", firstName: "James", lastName: "Okafor", age: 67, condition: "COPD III + Asthma", status: "critical", spo2: 86, hr: 104, rr: 24, riskBase: 86 },
+  { code: "#P-3302", firstName: "Maria", lastName: "Vasquez", age: 54, condition: "Severe Asthma", status: "warning", spo2: 91, hr: 92, rr: 20, riskBase: 66 },
+  { code: "#P-6641", firstName: "Robert", lastName: "Kim", age: 63, condition: "Pulmonary Fibrosis", status: "warning", spo2: 92, hr: 88, rr: 19, riskBase: 58 },
+  { code: "#P-5510", firstName: "Ahmed", lastName: "Benali", age: 71, condition: "COPD Stage II", status: "moderate", spo2: 94, hr: 78, rr: 17, riskBase: 42 },
+  { code: "#P-2287", firstName: "Sophie", lastName: "Turner", age: 45, condition: "Bronchiectasis", status: "stable", spo2: 97, hr: 68, rr: 15, riskBase: 24 },
+  { code: "#P-1190", firstName: "Fatima", lastName: "Diallo", age: 38, condition: "Asthma (Moderate)", status: "stable", spo2: 98, hr: 72, rr: 14, riskBase: 18 },
 ];
 
 const now = Date.now();
@@ -36,7 +35,6 @@ const run = async () => {
     DoctorProfile.deleteMany({}),
     PatientProfile.deleteMany({}),
     VitalRecord.deleteMany({}),
-    EnvironmentSnapshot.deleteMany({}),
     RiskAssessment.deleteMany({}),
     Alert.deleteMany({}),
     Consultation.deleteMany({}),
@@ -112,17 +110,7 @@ const run = async () => {
 
     await VitalRecord.insertMany(vitals);
 
-    await EnvironmentSnapshot.insertMany(
-      Array.from({ length: 8 }).map((_, idx) => ({
-        patient: user._id,
-        aqi: Math.max(45, item.aqi - idx * (item.status === "critical" ? 1 : 2) + ((idx + patientIndex) % 4)),
-        temperature: Number((item.temperature + ((idx + patientIndex) % 3) * 0.4 - 0.5).toFixed(1)),
-        humidity: Math.max(35, item.humidity + ((idx + patientIndex) % 5) - 2),
-        pollen: idx % 3 === 0 ? "High" : "Medium",
-        weather: idx % 2 === 0 ? "Partly Cloudy" : "Cloudy",
-        timestamp: hoursAgo(8 - idx),
-      })),
-    );
+    // Environment snapshots removed from seed
 
     const riskHistory = Array.from({ length: 10 }).map((_, idx) => {
       const score = Math.max(5, Math.min(99, item.riskBase - (9 - idx) * (item.status === "critical" ? 1 : 2) + ((idx + patientIndex) % 4)));
@@ -135,7 +123,7 @@ const run = async () => {
         factors: [
           { key: "spo2", label: "SpO₂ Trend", value: `${Math.max(82, item.spo2 - (9 - idx))}%`, severity: score > 75 ? "critical" : score > 55 ? "high" : "moderate" },
           { key: "apnea", label: "Apnea Burden", value: `${Number((Math.max(0, Math.min(10, (item.status === "critical" ? 8 : item.status === "warning" ? 6 : item.status === "moderate" ? 3 : 1) + ((idx + patientIndex) % 2) - 1))).toFixed(1))}/10`, severity: score > 70 ? "high" : "moderate" },
-          { key: "aqi", label: "Air Quality", value: `AQI ${Math.max(45, item.aqi - (9 - idx) * 2)}`, severity: item.aqi > 130 ? "high" : "moderate" },
+          { key: "apnea", label: "Apnea Burden", value: `${Number((Math.max(0, Math.min(10, (item.status === "critical" ? 8 : item.status === "warning" ? 6 : item.status === "moderate" ? 3 : 1) + ((idx + patientIndex) % 2) - 1))).toFixed(1))}/10`, severity: score > 70 ? "high" : "moderate" },
         ],
         guidelines: ["GINA 2024", "WHO", "GOLD", "ATS"],
         status: idx === 9 ? "active" : "validated",
@@ -175,7 +163,7 @@ const run = async () => {
   await Alert.insertMany([
     { patient: james.user._id, doctor: doctor._id, type: "critical", message: "James Okafor — SpO₂ dropped to 86%", status: "open" },
     { patient: maria.user._id, doctor: doctor._id, type: "warning", message: "Maria Vasquez — apnea severity elevated", status: "acknowledged" },
-    { patient: createdPatients[3].user._id, doctor: doctor._id, type: "info", message: "Sensor offline: environment node 8", status: "resolved" },
+    { patient: createdPatients[3].user._id, doctor: doctor._id, type: "info", message: "Sensor offline: node 8", status: "resolved" },
   ]);
 
   await Consultation.insertMany([
@@ -282,7 +270,7 @@ const run = async () => {
       includeVitals: true,
       includeAlerts: true,
       includeConsultations: false,
-      notes: "Use environmental mitigation plan before discharge.",
+      notes: "Use mitigation plan before discharge.",
     },
     {
       doctor: doctor._id,

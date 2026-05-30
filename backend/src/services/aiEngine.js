@@ -18,9 +18,6 @@ const DEFAULT_INTAKE_FORM = {
   hypertension: false,
   diabetes: false,
   heart_disease: false,
-  air_quality_index: 60,
-  environment_temperature: 24,
-  humidity: 50,
 };
 
 const classifyRiskStatus = (score) => {
@@ -121,7 +118,6 @@ const normalizeIntakeForm = (
   input = {},
   {
     latestVital = {},
-    latestEnvironment = {},
   } = {},
 ) => {
   const spo2 = clamp(
@@ -158,17 +154,6 @@ const normalizeIntakeForm = (
     45,
   );
 
-  const environmentTemperature = clamp(
-    firstNumber(
-      input?.environment_temperature,
-      latestEnvironment?.environment_temperature,
-      latestEnvironment?.temperature,
-      DEFAULT_INTAKE_FORM.environment_temperature,
-    ) ?? DEFAULT_INTAKE_FORM.environment_temperature,
-    -30,
-    60,
-  );
-
   const normalized = {
     age: clamp(
       Math.round(firstNumber(input?.age, DEFAULT_INTAKE_FORM.age) ?? DEFAULT_INTAKE_FORM.age),
@@ -203,24 +188,6 @@ const normalizeIntakeForm = (
     hypertension: firstBoolean(input?.hypertension, false) ?? false,
     diabetes: firstBoolean(input?.diabetes, false) ?? false,
     heart_disease: firstBoolean(input?.heart_disease, false) ?? false,
-    air_quality_index: clamp(
-      firstNumber(
-        input?.air_quality_index,
-        input?.aqi,
-        latestEnvironment?.air_quality_index,
-        latestEnvironment?.aqi,
-        DEFAULT_INTAKE_FORM.air_quality_index,
-      ) ?? DEFAULT_INTAKE_FORM.air_quality_index,
-      0,
-      500,
-    ),
-    environment_temperature: environmentTemperature,
-    humidity: clamp(
-      firstNumber(input?.humidity, latestEnvironment?.humidity, DEFAULT_INTAKE_FORM.humidity)
-        ?? DEFAULT_INTAKE_FORM.humidity,
-      0,
-      100,
-    ),
   };
 
   const bmi = normalized.weight_kg / Math.max(0.25, (normalized.height_cm / 100) ** 2);
@@ -291,15 +258,6 @@ const buildModelOutputsFromSignals = (signals) => {
     100,
   );
 
-  const aqiRisk = clamp((signals.air_quality_index - 50) * 0.45, 0, 100);
-  const envTemperatureRisk = clamp(Math.abs(signals.environment_temperature - 24) * 4, 0, 100);
-  const humidityRisk = clamp(Math.abs(signals.humidity - 50) * 1.8, 0, 100);
-  const environmentRisk = clamp(
-    Math.round(0.6 * aqiRisk + 0.2 * envTemperatureRisk + 0.2 * humidityRisk),
-    0,
-    100,
-  );
-
   return {
     vitalsModel: {
       label: "Vitals Model",
@@ -319,12 +277,6 @@ const buildModelOutputsFromSignals = (signals) => {
       status: statusFromPercent(historyRisk),
       details: `BMI ${signals.bmi.toFixed(1)} · ${signals.chronic_condition_count} chronic factors · smoking ${signals.smoking_status}`,
     },
-    environmentModel: {
-      label: "Environment Model",
-      score: environmentRisk,
-      status: statusFromPercent(environmentRisk),
-      details: `AQI ${signals.air_quality_index} · Env Temp ${signals.environment_temperature}C · Humidity ${signals.humidity}%`,
-    },
   };
 };
 
@@ -332,8 +284,7 @@ const buildWeightedScore = (modelOutputs) => {
   const vitals = Number(modelOutputs?.vitalsModel?.score ?? 0);
   const symptoms = Number(modelOutputs?.symptomsModel?.score ?? 0);
   const history = Number(modelOutputs?.historyModel?.score ?? 0);
-  const environment = Number(modelOutputs?.environmentModel?.score ?? 0);
-  return clamp(Math.round(0.35 * vitals + 0.25 * symptoms + 0.2 * history + 0.2 * environment), 0, 100);
+  return clamp(Math.round(0.44 * vitals + 0.31 * symptoms + 0.25 * history), 0, 100);
 };
 
 const buildFactorsFromSignals = (signals, score) => {
@@ -372,15 +323,6 @@ const buildFactorsFromSignals = (signals, score) => {
       key: "history",
       label: "Medical History",
       value: `${signals.chronic_condition_count} chronic factors · smoking ${signals.smoking_status}`,
-      severity,
-    });
-  }
-
-  if (signals.air_quality_index > 100) {
-    factors.push({
-      key: "environment",
-      label: "Environmental Exposure",
-      value: `AQI ${signals.air_quality_index}`,
       severity,
     });
   }
@@ -433,12 +375,9 @@ const buildModelOutputsFromAiService = (models = {}) => {
   const vitalsSource = models?.vitals || {};
   const symptomsSource = models?.symptoms || models?.audio || {};
   const historySource = models?.history || models?.apnea || {};
-  const environmentSource = models?.environment || {};
-
   const vitalsRisk = toPercentFromRisk(vitalsSource?.risk_score);
   const symptomsRisk = toPercentFromRisk(symptomsSource?.risk_score);
   const historyRisk = toPercentFromRisk(historySource?.risk_score);
-  const environmentRisk = toPercentFromRisk(environmentSource?.risk_score);
 
   const patterns = Array.isArray(vitalsSource?.abnormal_patterns)
     ? vitalsSource.abnormal_patterns
@@ -462,12 +401,6 @@ const buildModelOutputsFromAiService = (models = {}) => {
       score: historyRisk,
       status: statusFromPercent(historyRisk),
       details: `BMI ${Number(historySource?.bmi ?? 0).toFixed(1)} · smoking ${String(historySource?.smoking_status || "non_smoker")} · chronic ${Number(historySource?.chronic_condition_count ?? 0)}`,
-    },
-    environmentModel: {
-      label: "Environment Model",
-      score: environmentRisk,
-      status: statusFromPercent(environmentRisk),
-      details: `AQI ${Number(environmentSource?.air_quality_index ?? environmentSource?.aqi ?? 0)} · Temp ${Number(environmentSource?.temperature ?? 22)}C · Humidity ${Number(environmentSource?.humidity ?? 50)}%`,
     },
   };
 };
@@ -504,8 +437,8 @@ const buildInsightsFromAiServiceResponse = (response) => {
   };
 };
 
-export const buildModelOutputs = ({ latestVital, latestEnvironment, intakeForm }) => {
-  const signals = normalizeIntakeForm(intakeForm || {}, { latestVital, latestEnvironment });
+export const buildModelOutputs = ({ latestVital, intakeForm }) => {
+  const signals = normalizeIntakeForm(intakeForm || {}, { latestVital });
   return buildModelOutputsFromSignals(signals);
 };
 
@@ -549,8 +482,8 @@ export const buildManualAiInsights = ({ input, ragInsight }) => {
   };
 };
 
-const buildHeuristicInsight = ({ latestVital, latestEnvironment, patientCondition, intakeForm }) => {
-  const signals = normalizeIntakeForm(intakeForm || {}, { latestVital, latestEnvironment });
+const buildHeuristicInsight = ({ latestVital, patientCondition, intakeForm }) => {
+  const signals = normalizeIntakeForm(intakeForm || {}, { latestVital });
   const modelOutputs = buildModelOutputsFromSignals(signals);
   const score = buildWeightedScore(modelOutputs);
   const status = classifyRiskStatus(score);
@@ -583,18 +516,16 @@ export const buildAiInsight = async ({
   patientId,
   latestVital,
   historyVitals,
-  latestEnvironment,
   patientCondition,
   intakeForm,
 }) => {
-  const normalizedIntake = normalizeIntakeForm(intakeForm || {}, { latestVital, latestEnvironment });
+  const normalizedIntake = normalizeIntakeForm(intakeForm || {}, { latestVital });
 
   try {
     const aiPrediction = await predictRiskFromAiService({
       patientId,
       latestVital,
       historyVitals,
-      latestEnvironment,
       intakeForm: normalizedIntake,
     });
 
@@ -605,7 +536,7 @@ export const buildAiInsight = async ({
         : buildFactorsFromSignals(normalizedIntake, Number(aiPrediction.score ?? 0)),
     };
   } catch {
-    return buildHeuristicInsight({ latestVital, latestEnvironment, patientCondition, intakeForm: normalizedIntake });
+    return buildHeuristicInsight({ latestVital, patientCondition, intakeForm: normalizedIntake });
   }
 };
 
@@ -613,7 +544,6 @@ export const buildCompositeAiInsight = async ({
   patientId,
   latestVital,
   historyVitals,
-  latestEnvironment,
   patientCondition,
   ragInsight,
   intakeForm,
@@ -622,7 +552,6 @@ export const buildCompositeAiInsight = async ({
     patientId,
     latestVital,
     historyVitals,
-    latestEnvironment,
     patientCondition,
     intakeForm,
   });
@@ -637,7 +566,7 @@ export const buildCompositeAiInsight = async ({
     };
   }
 
-  const modelOutputs = buildModelOutputs({ latestVital, latestEnvironment, intakeForm });
+  const modelOutputs = buildModelOutputs({ latestVital, intakeForm });
   const blendedScore = Math.round((Number(base.score || 0) + buildWeightedScore(modelOutputs)) / 2);
 
   return {
@@ -662,7 +591,7 @@ export const generateChatReply = ({ prompt, insight }) => {
 
   if (normalized.includes("walk") || normalized.includes("outside") || normalized.includes("outdoor")) {
     if (insight.status === "critical" || insight.status === "warning") {
-      return "Air quality is currently a trigger risk. Prefer indoor breathing exercises today and avoid outdoor effort until AQI improves.";
+      return "Based on your current risk status, keep activity light and stay close to support. Indoor breathing exercises are safest right now.";
     }
     return "A short light walk is acceptable. Keep your inhaler with you and avoid intense exertion.";
   }
@@ -682,17 +611,15 @@ export const generateExplainableInsight = async ({
   patientId,
   latestVital,
   historyVitals,
-  latestEnvironment,
   intakeForm,
 }) => {
-  const normalizedIntake = normalizeIntakeForm(intakeForm || {}, { latestVital, latestEnvironment });
+  const normalizedIntake = normalizeIntakeForm(intakeForm || {}, { latestVital });
 
   try {
     return await explainRiskFromAiService({
       patientId,
       latestVital,
       historyVitals,
-      latestEnvironment,
       intakeForm: normalizedIntake,
     });
   } catch {

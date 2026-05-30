@@ -1074,7 +1074,6 @@ function AIInsightsView({
 
   const latestRisk = aiInsights || patientDetails?.latestRisk;
   const latestVital = patientDetails?.latestVital;
-  const latestEnvironment = patientDetails?.latestEnvironment;
   const canDownloadAiReport = Boolean(selectedPatient?.id && latestRisk);
   const modelOutputs = aiInsights?.modelOutputs ? Object.values(aiInsights.modelOutputs) : [];
   const ragSources = aiInsights?.rag?.sources || [];
@@ -1334,7 +1333,6 @@ function AIInsightsView({
         <AIRiskWidget
           risk={latestRisk}
           latestVital={latestVital}
-          latestEnvironment={latestEnvironment}
           patientCondition={selectedPatient?.condition}
           patientName={selectedPatient?.name}
         />

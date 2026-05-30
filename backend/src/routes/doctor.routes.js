@@ -9,7 +9,6 @@ import { User } from "../models/User.js";
 import { PatientProfile } from "../models/PatientProfile.js";
 import { VitalRecord } from "../models/VitalRecord.js";
 import { RiskAssessment } from "../models/RiskAssessment.js";
-import { EnvironmentSnapshot } from "../models/EnvironmentSnapshot.js";
 import { Alert } from "../models/Alert.js";
 import { Consultation } from "../models/Consultation.js";
 import { Report } from "../models/Report.js";
@@ -297,7 +296,6 @@ const recordModelInputsAsVitalRecord = async ({
   manualInput,
   uploadedFilesForAi,
   latestVitalPayload,
-  latestEnvironmentPayload,
   aiResult,
 }) => {
   const modelInputs = {};
@@ -339,9 +337,6 @@ const recordModelInputsAsVitalRecord = async ({
     apneaLevel: toFiniteNumberOrNull(latestVitalPayload?.apneaLevel) ?? 0,
     coughEvents: toFiniteNumberOrNull(latestVitalPayload?.coughEvents) ?? 0,
     wheezeDetected: Boolean(latestVitalPayload?.wheezeDetected),
-    aqi: toFiniteNumberOrNull(latestEnvironmentPayload?.aqi),
-    roomTemperature: toFiniteNumberOrNull(latestEnvironmentPayload?.temperature),
-    humidity: toFiniteNumberOrNull(latestEnvironmentPayload?.humidity),
     modelInputs: mergedModelInputs,
   });
 };
@@ -352,14 +347,12 @@ const buildDoctorAiInputSnapshot = ({
   manualInput,
   uploadedFilesForAi,
   latestVitalPayload,
-  latestEnvironmentPayload,
 }) => ({
   patientId: profile.patientCode,
   model: modelKey || MANUAL_MODEL_KEYS.all,
   usedAt: new Date().toISOString(),
   input: manualInput || {},
   vitalsUsed: latestVitalPayload || {},
-  environmentUsed: latestEnvironmentPayload || {},
   filesUsed: {
     apn: fileSummary(uploadedFilesForAi?.apnFile),
     dat: fileSummary(uploadedFilesForAi?.datFile),
@@ -527,7 +520,7 @@ const buildManualInputFromSpo2Csv = (csvFile, fallback = {}) => {
   return manualInput;
 };
 
-const buildFallbackManualInput = ({ profile, latestVital, latestEnvironment }) => {
+const buildFallbackManualInput = ({ profile, latestVital }) => {
   const fallback = {
     ...getDefaultPatientFormData(),
     ...(profile?.latestIntakeForm || {}),
@@ -539,11 +532,6 @@ const buildFallbackManualInput = ({ profile, latestVital, latestEnvironment }) =
     fallback.respiratory_rate = latestVital.rr ?? fallback.respiratory_rate;
   }
 
-  if (latestEnvironment) {
-    fallback.air_quality_index = latestEnvironment.aqi ?? fallback.air_quality_index;
-    fallback.environment_temperature = latestEnvironment.temperature ?? fallback.environment_temperature;
-    fallback.humidity = latestEnvironment.humidity ?? fallback.humidity;
-  }
 
   return fallback;
 };
@@ -792,9 +780,8 @@ doctorRouter.get(
 
     const { uploadAt, uploadName } = resolveUploadMeta(profile);
 
-    const [latestVital, latestEnvironment, latestRisk, medications, recentAlerts] = await Promise.all([
+    const [latestVital, latestRisk, medications, recentAlerts] = await Promise.all([
       fetchLatestVital(profile.user._id),
-      EnvironmentSnapshot.findOne({ patient: profile.user._id }).sort({ timestamp: -1 }),
       fetchLatestRisk(profile.user._id),
       MedicationSchedule.find({ patient: profile.user._id }).sort({ createdAt: 1 }),
       Alert.find({ patient: profile.user._id }).sort({ createdAt: -1 }).limit(10),
@@ -811,7 +798,6 @@ doctorRouter.get(
         gender: profile.gender || latestVital?.modelInputs?.model2Spo2?.features?.gender || "",
         profile,
         latestVital,
-        latestEnvironment,
         latestRisk: formatRiskSnapshot(latestRisk),
         latestUploadAt: uploadAt,
         latestUploadName: uploadName,
@@ -984,21 +970,6 @@ doctorRouter.get(
 
 
 doctorRouter.get(
-  "/patients/:patientIdentifier/environment",
-  asyncHandler(async (req, res) => {
-    const profile = await resolvePatientByIdentifier(req.params.patientIdentifier);
-    ensureAccess(req.user.userId, profile);
-    await ensurePatientClinicalData(profile);
-
-    const snapshots = await EnvironmentSnapshot.find({ patient: profile.user._id })
-      .sort({ timestamp: -1 })
-      .limit(Math.min(200, Number(req.query.limit || 24)));
-
-    return res.json({ success: true, snapshots, trend: [...snapshots].reverse() });
-  }),
-);
-
-doctorRouter.get(
   "/patients/:patientIdentifier/risk-history",
   asyncHandler(async (req, res) => {
     const profile = await resolvePatientByIdentifier(req.params.patientIdentifier);
@@ -1025,16 +996,12 @@ doctorRouter.post(
     const intakeForm = profile.latestIntakeForm || null;
 
     if (!latestRisk) {
-      const [latestVital, latestEnvironment] = await Promise.all([
-        fetchLatestVital(profile.user._id),
-        EnvironmentSnapshot.findOne({ patient: profile.user._id }).sort({ timestamp: -1 }),
-      ]);
+      const latestVital = await fetchLatestVital(profile.user._id);
       const historyVitals = await VitalRecord.find({ patient: profile.user._id }).sort({ timestamp: -1 }).limit(48);
       const ragInsight = await generateExplainableInsight({
         patientId: profile.patientCode,
         latestVital,
         historyVitals: [...historyVitals].reverse(),
-        latestEnvironment,
         intakeForm,
       });
 
@@ -1042,7 +1009,6 @@ doctorRouter.post(
         patientId: profile.patientCode,
         latestVital,
         historyVitals: [...historyVitals].reverse(),
-        latestEnvironment,
         patientCondition: profile.condition,
         ragInsight,
         intakeForm,
@@ -1193,11 +1159,8 @@ doctorRouter.post(
       }
       manualInput = validation.data;
     } else {
-      const [latestVital, latestEnvironment] = await Promise.all([
-        fetchLatestVital(profile.user._id),
-        EnvironmentSnapshot.findOne({ patient: profile.user._id }).sort({ timestamp: -1 }),
-      ]);
-      const fallbackManualInput = buildFallbackManualInput({ profile, latestVital, latestEnvironment });
+      const latestVital = await fetchLatestVital(profile.user._id);
+      const fallbackManualInput = buildFallbackManualInput({ profile, latestVital });
 
       if (modelKey === MANUAL_MODEL_KEYS.spo2) {
         const csvFile = getUploadedFile(req, "csv_file");
@@ -1284,11 +1247,7 @@ doctorRouter.post(
       hr: Number(manualInput.heart_rate ?? 72),
       apneaLevel: estimatedApneaLevel,
     };
-    const latestEnvironmentPayload = {
-      aqi: Number(manualInput.air_quality_index ?? 80),
-      temperature: Number(manualInput.environment_temperature ?? 22),
-      humidity: Number(manualInput.humidity ?? 60),
-    };
+    // environment data removed
 
     let ragInsight = null;
     try {
@@ -1303,7 +1262,6 @@ doctorRouter.post(
           patientId: profile.patientCode,
           latestVital: latestVitalPayload,
           historyVitals: [],
-          latestEnvironment: latestEnvironmentPayload,
           intakeForm: manualInput,
           uploadedFiles: uploadedFilesForAi,
         });
@@ -1313,7 +1271,6 @@ doctorRouter.post(
         patientId: profile.patientCode,
         latestVital: latestVitalPayload,
         historyVitals: [],
-        latestEnvironment: latestEnvironmentPayload,
         intakeForm: manualInput,
       });
     }
@@ -1331,7 +1288,6 @@ doctorRouter.post(
       manualInput,
       uploadedFilesForAi,
       latestVitalPayload,
-      latestEnvironmentPayload,
     });
 
     const insights = formatAiInsight({
@@ -1358,7 +1314,6 @@ doctorRouter.post(
       manualInput,
       uploadedFilesForAi,
       latestVitalPayload,
-      latestEnvironmentPayload,
       aiResult: ragInsight,
     });
 

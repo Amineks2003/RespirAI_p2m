@@ -321,9 +321,7 @@ const backfill = async () => {
       apneaLevel: Number((modelInputs.model1Apnea.modelOutput.riskScore / 10).toFixed(1)),
       coughEvents: values.coughEvents,
       wheezeDetected: values.wheezeDetected,
-      aqi: deterministicInt(seed + 42, 45, 160),
-      roomTemperature: deterministicNumber(seed + 43, 20, 28, 1),
-      humidity: deterministicInt(seed + 44, 35, 75),
+      // environment fields removed
       source: "generated-model-input-backfill",
       modelInputs,
     });

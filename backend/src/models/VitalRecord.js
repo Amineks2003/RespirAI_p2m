@@ -91,9 +91,7 @@ const vitalRecordSchema = new mongoose.Schema(
     apneaLevel: { type: Number, default: 0 },
     coughEvents: { type: Number, default: 0 },
     wheezeDetected: { type: Boolean, default: false },
-    aqi: { type: Number, default: null },
-    roomTemperature: { type: Number, default: null },
-    humidity: { type: Number, default: null },
+    // environment fields removed
     source: { type: String, default: "wearable" },
     timestamp: { type: Date, default: Date.now, index: true },
 

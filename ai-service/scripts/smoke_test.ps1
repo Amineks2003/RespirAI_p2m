@@ -16,15 +16,12 @@ $payload = @{
     cough = $true
     shortness_of_breath = $true
     wheezing = $true
-    air_quality_index = 135
-    environment_temperature = 30
-    humidity = 72
+    # environment fields removed
   }
   physiology = @(
     @{ spo2 = 94; rr = 21; hr = 96; cough_events_per_hour = 4; wheezing_detected = $false },
     @{ spo2 = 92; rr = 24; hr = 104; cough_events_per_hour = 9; wheezing_detected = $true }
   )
-  environment = @{ aqi = 135; temperature = 30; humidity = 72 }
   top_k_guidelines = 4
 }
 

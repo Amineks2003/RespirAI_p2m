@@ -13,7 +13,6 @@ import {
 interface AIRiskWidgetProps {
   risk?: any;
   latestVital?: any;
-  latestEnvironment?: any;
   patientCondition?: string;
   patientName?: string;
 }
@@ -99,7 +98,6 @@ const getRiskSoftColor = (percentage: number) => {
 export function AIRiskWidget({
   risk,
   latestVital,
-  latestEnvironment,
   patientCondition,
   patientName,
 }: AIRiskWidgetProps) {
